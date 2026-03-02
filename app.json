@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "カドスケ！",
+    "slug": "kadosuke",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#E85D26"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kadosuke.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#E85D26"
+      },
+      "package": "com.kadosuke.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6b41bc33-4061-425a-a63f-70feb3f08e7a"
+      }
+    }
+  }
+}
