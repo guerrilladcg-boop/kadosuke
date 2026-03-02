@@ -1,8 +1,12 @@
-﻿import React from "react";
+import React from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert } from "react-native";
 import { C } from "../constants/theme";
 import { useAuthStore } from "../store/useAuthStore";
 import { supabase } from "../lib/supabase";
+import { useAdRewards } from "../hooks/useAdRewards";
+import RewardedAdButton from "../components/RewardedAdButton";
+import { POINTS_PER_AD } from "../constants/adConfig";
+
 const REWARDS = [
   { icon: "🃏", name: "限定スリーブ", pt: 500 },
   { icon: "🥤", name: "ドリンクチケット", pt: 150 },
@@ -10,9 +14,12 @@ const REWARDS = [
 export default function SponsorScreen() {
   const { user } = useAuthStore();
   const [points, setPoints] = React.useState(0);
+  const { canWatchAd, remainingViews, adLoading, showRewardedAd } = useAdRewards();
+
   React.useEffect(() => {
     fetchPoints();
   }, [user]);
+
   const fetchPoints = async () => {
     if (!user) return;
     const { data } = await supabase
@@ -22,12 +29,25 @@ export default function SponsorScreen() {
       .single();
     if (data) setPoints(data.points || 0);
   };
+
+  const handleWatchAd = async () => {
+    const result = await showRewardedAd();
+    if (!result.error) {
+      await fetchPoints();
+      Alert.alert("ポイント獲得!", `${POINTS_PER_AD}ptを獲得しました!`);
+    } else if (typeof result.error === "string") {
+      Alert.alert("お知らせ", result.error);
+    } else {
+      Alert.alert("エラー", "ポイントの付与に失敗しました");
+    }
+  };
+
   const handleExchange = (item) => {
     if (points < item.pt) {
       Alert.alert("ポイント不足", `${item.pt}pt必要です（現在${points}pt）`);
       return;
     }
-    Alert.alert("交換確認", `${item.name}と交換しますか？\\n${item.pt}ptを消費します`, [
+    Alert.alert("交換確認", `${item.name}と交換しますか？\n${item.pt}ptを消費します`, [
       { text: "キャンセル", style: "cancel" },
       {
         text: "交換する", onPress: async () => {
@@ -37,21 +57,31 @@ export default function SponsorScreen() {
             .eq("id", user.id);
           if (!error) {
             setPoints(points - item.pt);
-            Alert.alert("交換完了！", `${item.name}と交換しました🎉`);
+            Alert.alert("交換完了!", `${item.name}と交換しました`);
           }
         }
       },
     ]);
   };
+
   return (
     <ScrollView style={styles.screen} showsVerticalScrollIndicator={false}>
       <View style={styles.pointCard}>
         <Text style={styles.pointLabel}>現在の保有ポイント</Text>
         <Text style={styles.pointValue}>{points.toLocaleString()} pt</Text>
-        <Text style={styles.pointBonus}>大会参加でポイントが貯まります 🎉</Text>
+        <Text style={styles.pointBonus}>大会参加・動画視聴でポイントが貯まります</Text>
       </View>
+
+      {/* 広告視聴ボタン */}
+      <RewardedAdButton
+        canWatchAd={canWatchAd}
+        remainingViews={remainingViews}
+        adLoading={adLoading}
+        onPress={handleWatchAd}
+      />
+
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>🎁 ポイント交換所</Text>
+        <Text style={styles.sectionTitle}>ポイント交換所</Text>
       </View>
       <View style={styles.rewardGrid}>
         {REWARDS.map((item, i) => (

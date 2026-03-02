@@ -1,12 +1,14 @@
-﻿import React, { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  TextInput, StyleSheet, ActivityIndicator, Modal
+  TextInput, StyleSheet, ActivityIndicator
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { C, GAME_TITLES } from "../constants/theme";
+import { C } from "../constants/theme";
 import { useTournaments } from "../hooks/useTournaments";
 import TournamentDetailModal from "../components/TournamentDetailModal";
+import FilterModal from "../components/FilterModal";
+import SortModal, { SORT_OPTIONS } from "../components/SortModal";
 const DAYS = ["日", "月", "火", "水", "木", "金", "土"];
 function CalendarView({ tournaments, onSelect }) {
   const today = new Date();
@@ -76,7 +78,6 @@ function CalendarView({ tournaments, onSelect }) {
           );
         })}
       </View>
-      {/* 選択月の大会リスト */}
       <ScrollView style={cal.eventList}>
         {Object.entries(tournamentDates).sort((a, b) => a[0] - b[0]).map(([day, ts]) =>
           ts.map((t) => (
@@ -101,18 +102,46 @@ export default function SearchScreen() {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState("list");
   const [showFilter, setShowFilter] = useState(false);
-  const [filterGame, setFilterGame] = useState("");
+  const [showSort, setShowSort] = useState(false);
+  const [filterGames, setFilterGames] = useState([]);
+  const [filterLocation, setFilterLocation] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState("date_asc");
   const [selectedTournament, setSelectedTournament] = useState(null);
   const { tournaments, loading, search, toggleFavorite, toggleEntry } = useTournaments();
+
+  const currentFilters = { games: filterGames, dateFrom, dateTo, location: filterLocation };
+
+  const doSearch = (overrides = {}) => {
+    search({
+      query: overrides.query !== undefined ? overrides.query : query,
+      games: overrides.games !== undefined ? overrides.games : filterGames,
+      dateFrom: overrides.dateFrom !== undefined ? overrides.dateFrom : dateFrom,
+      dateTo: overrides.dateTo !== undefined ? overrides.dateTo : dateTo,
+      location: overrides.location !== undefined ? overrides.location : filterLocation,
+      sortBy: overrides.sortBy !== undefined ? overrides.sortBy : sortBy,
+    });
+  };
+
   const handleSearch = (text) => {
     setQuery(text);
-    search({ query: text, game: filterGame });
+    doSearch({ query: text });
   };
-  const handleFilterGame = (game) => {
-    const newGame = filterGame === game ? "" : game;
-    setFilterGame(newGame);
-    search({ query, game: newGame });
+
+  const handleApplyFilter = (f) => {
+    setFilterGames(f.games);
+    setDateFrom(f.dateFrom);
+    setDateTo(f.dateTo);
+    setFilterLocation(f.location);
+    doSearch({ games: f.games, dateFrom: f.dateFrom, dateTo: f.dateTo, location: f.location });
   };
+
+  const handleSortChange = (newSort) => {
+    setSortBy(newSort);
+    doSearch({ sortBy: newSort });
+  };
+
   const handleToggleFavorite = async (t) => {
     await toggleFavorite(t);
     if (selectedTournament?.id === t.id) {
@@ -125,6 +154,10 @@ export default function SearchScreen() {
       setSelectedTournament({ ...t, isEntered: !t.isEntered });
     }
   };
+
+  const activeFilterCount = filterGames.length + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0) + (filterLocation ? 1 : 0);
+  const sortLabel = SORT_OPTIONS.find((o) => o.key === sortBy)?.label || "並び替え";
+
   return (
     <View style={styles.container}>
       {/* 検索バー */}
@@ -145,7 +178,6 @@ export default function SearchScreen() {
       </View>
       {/* コントロールバー */}
       <View style={styles.controlBar}>
-        {/* リスト/カレンダー切替 */}
         <View style={styles.toggleRow}>
           <TouchableOpacity
             style={[styles.toggleBtn, viewMode === "list" && styles.toggleBtnActive]}
@@ -162,47 +194,40 @@ export default function SearchScreen() {
             <Text style={[styles.toggleText, viewMode === "calendar" && { color: "#fff" }]}>カレンダー</Text>
           </TouchableOpacity>
         </View>
-        {/* フィルターボタン */}
-        <TouchableOpacity
-          style={[styles.filterBtn, filterGame && styles.filterBtnActive]}
-          onPress={() => setShowFilter(true)}
-        >
-          <Ionicons name="options-outline" size={16} color={filterGame ? "#fff" : C.text} />
-          <Text style={[styles.filterBtnText, filterGame && { color: "#fff" }]}>
-            {filterGame || "フィルター"}
-          </Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          {/* ソートボタン */}
+          <TouchableOpacity
+            style={[styles.sortBtn, sortBy !== "date_asc" && styles.sortBtnActive]}
+            onPress={() => setShowSort(true)}
+          >
+            <Ionicons name="swap-vertical" size={16} color={sortBy !== "date_asc" ? "#fff" : C.text} />
+          </TouchableOpacity>
+          {/* フィルターボタン */}
+          <TouchableOpacity
+            style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}
+            onPress={() => setShowFilter(true)}
+          >
+            <Ionicons name="options-outline" size={16} color={activeFilterCount > 0 ? "#fff" : C.text} />
+            <Text style={[styles.filterBtnText, activeFilterCount > 0 && { color: "#fff" }]}>
+              {activeFilterCount > 0 ? `フィルター(${activeFilterCount})` : "フィルター"}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
       {/* フィルターモーダル */}
-      <Modal visible={showFilter} animationType="slide" presentationStyle="pageSheet">
-        <View style={styles.filterModal}>
-          <View style={styles.filterHeader}>
-            <Text style={styles.filterTitle}>フィルター</Text>
-            <TouchableOpacity onPress={() => setShowFilter(false)}>
-              <Text style={styles.filterClose}>完了</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.filterBody}>
-            <Text style={styles.filterLabel}>ゲーム</Text>
-            <View style={styles.gameRow}>
-              {GAME_TITLES.map((g) => (
-                <TouchableOpacity
-                  key={g.id}
-                  style={[styles.gameChip, filterGame === g.name && { backgroundColor: g.color }]}
-                  onPress={() => handleFilterGame(g.name)}
-                >
-                  <Text style={[styles.gameChipText, filterGame === g.name && { color: "#fff" }]}>{g.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {filterGame && (
-              <TouchableOpacity style={styles.clearBtn} onPress={() => { setFilterGame(""); search({ query }); }}>
-                <Text style={styles.clearBtnText}>フィルターをクリア</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </Modal>
+      <FilterModal
+        visible={showFilter}
+        onClose={() => setShowFilter(false)}
+        filters={currentFilters}
+        onApply={handleApplyFilter}
+      />
+      {/* ソートモーダル */}
+      <SortModal
+        visible={showSort}
+        onClose={() => setShowSort(false)}
+        sortBy={sortBy}
+        onSelect={handleSortChange}
+      />
       {/* メインコンテンツ */}
       {loading ? (
         <ActivityIndicator color={C.primary} style={{ marginTop: 40 }} />
@@ -227,7 +252,8 @@ export default function SearchScreen() {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.tournamentName}>{t.name}</Text>
-                <Text style={styles.organizerText}>📍 {t.organizer}</Text>
+                <Text style={styles.organizerText}>{t.organizer}</Text>
+                {t.location ? <Text style={styles.locationText}>{t.location}</Text> : null}
                 <View style={styles.cardBottom}>
                   <View style={styles.tagRow}>
                     {(t.tags || []).map((tag, j) => (
@@ -250,7 +276,6 @@ export default function SearchScreen() {
       ) : (
         <CalendarView tournaments={tournaments} onSelect={setSelectedTournament} />
       )}
-      {/* 大会詳細モーダル */}
       <TournamentDetailModal
         tournament={selectedTournament}
         visible={!!selectedTournament}
@@ -270,20 +295,11 @@ const styles = StyleSheet.create({
   toggleBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
   toggleBtnActive: { backgroundColor: C.primary },
   toggleText: { fontSize: 13, fontWeight: "600", color: C.textSub },
+  sortBtn: { alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  sortBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
   filterBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
   filterBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
   filterBtnText: { fontSize: 13, color: C.text },
-  filterModal: { flex: 1, backgroundColor: C.bg },
-  filterHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
-  filterTitle: { fontSize: 16, fontWeight: "bold", color: C.text },
-  filterClose: { fontSize: 15, fontWeight: "bold", color: C.primary },
-  filterBody: { padding: 16 },
-  filterLabel: { fontSize: 13, fontWeight: "bold", color: C.textSub, marginBottom: 10 },
-  gameRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  gameChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
-  gameChipText: { fontSize: 13, color: C.text },
-  clearBtn: { marginTop: 16, alignItems: "center" },
-  clearBtnText: { color: "#EF4444", fontSize: 14 },
   list: { flex: 1, paddingHorizontal: 16 },
   card: { backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10, elevation: 2 },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
@@ -292,6 +308,7 @@ const styles = StyleSheet.create({
   dateText: { fontSize: 12, color: C.textSub },
   tournamentName: { fontSize: 15, fontWeight: "bold", color: C.text },
   organizerText: { fontSize: 13, color: C.textSub, marginTop: 4 },
+  locationText: { fontSize: 12, color: C.textSub, marginTop: 2 },
   cardBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
   tagRow: { flexDirection: "row", gap: 6, flexWrap: "wrap", flex: 1 },
   tag: { backgroundColor: C.bg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },

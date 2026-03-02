@@ -1,8 +1,9 @@
-﻿import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../store/useAuthStore";
 export const useOrganizer = () => {
   const [isOrganizer, setIsOrganizer] = useState(false);
+  const [organizerStatus, setOrganizerStatus] = useState("none");
   const [myTournaments, setMyTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuthStore();
@@ -10,10 +11,12 @@ export const useOrganizer = () => {
     if (!user) return;
     const { data } = await supabase
       .from("profiles")
-      .select("is_organizer")
+      .select("is_organizer, organizer_status")
       .eq("id", user.id)
       .single();
-    setIsOrganizer(data?.is_organizer || false);
+    const status = data?.organizer_status || "none";
+    setOrganizerStatus(status);
+    setIsOrganizer(status === "approved");
     setLoading(false);
   }, [user]);
   const fetchMyTournaments = useCallback(async () => {
@@ -27,11 +30,30 @@ export const useOrganizer = () => {
   }, [user]);
   const applyOrganizer = async () => {
     if (!user) return { error: "未ログイン" };
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ organizer_status: "pending" })
+      .eq("id", user.id);
+    if (profileError) return { error: profileError };
+    const { error: appError } = await supabase
+      .from("organizer_applications")
+      .insert({ user_id: user.id, status: "pending" });
+    if (appError) return { error: appError };
+    setOrganizerStatus("pending");
+    return { error: null };
+  };
+  const cancelApplication = async () => {
+    if (!user) return { error: "未ログイン" };
+    await supabase
+      .from("organizer_applications")
+      .delete()
+      .eq("user_id", user.id)
+      .eq("status", "pending");
     const { error } = await supabase
       .from("profiles")
-      .update({ is_organizer: true })
+      .update({ organizer_status: "none" })
       .eq("id", user.id);
-    if (!error) setIsOrganizer(true);
+    if (!error) setOrganizerStatus("none");
     return { error };
   };
   const createTournament = async (data) => {
@@ -54,5 +76,5 @@ export const useOrganizer = () => {
     fetchProfile();
     fetchMyTournaments();
   }, [fetchProfile, fetchMyTournaments]);
-  return { isOrganizer, myTournaments, loading, applyOrganizer, createTournament, deleteTournament };
+  return { isOrganizer, organizerStatus, myTournaments, loading, applyOrganizer, cancelApplication, createTournament, deleteTournament, refetch: fetchProfile };
 };
