@@ -5,12 +5,38 @@ import {
 } from "react-native";
 import { C } from "../constants/theme";
 import { useAuthStore } from "../store/useAuthStore";
+import { supabase } from "../lib/supabase";
 export default function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const { signIn, signUp } = useAuthStore();
+
+  const handleForgotPassword = () => {
+    if (!email.trim()) {
+      Alert.alert("メールアドレスを入力", "パスワードリセット用のメールを送信するため、メールアドレスを入力してください。");
+      return;
+    }
+    Alert.alert(
+      "パスワードリセット",
+      `${email} にパスワードリセット用のメールを送信しますか？`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: "送信する",
+          onPress: async () => {
+            const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+            if (!error) {
+              Alert.alert("送信完了", "パスワードリセット用のメールを送信しました。メールをご確認ください。");
+            } else {
+              Alert.alert("エラー", "メールの送信に失敗しました。メールアドレスをご確認ください。");
+            }
+          },
+        },
+      ]
+    );
+  };
   const handleSubmit = async () => {
     if (!email || !password) {
       Alert.alert("エラー", "メールアドレスとパスワードを入力してください");
@@ -26,7 +52,18 @@ export default function AuthScreen() {
       : await signUp(email, password);
     setLoading(false);
     if (error) {
-      Alert.alert("エラー", error.message);
+      // エラーメッセージを日本語化
+      let msg = error.message;
+      if (msg.includes("already registered") || msg.includes("already been registered")) {
+        msg = "このメールアドレスは既に登録されています。ログインしてください。";
+      } else if (msg.includes("Invalid login")) {
+        msg = "メールアドレスまたはパスワードが正しくありません。";
+      } else if (msg.includes("Email not confirmed")) {
+        msg = "メールアドレスが確認されていません。確認メールをご確認ください。";
+      } else if (msg.includes("rate limit") || msg.includes("too many")) {
+        msg = "リクエストが多すぎます。しばらく待ってからお試しください。";
+      }
+      Alert.alert("エラー", msg);
     }
   };
   return (
@@ -78,6 +115,11 @@ export default function AuthScreen() {
             : <Text style={styles.btnText}>{isLogin ? "ログイン" : "アカウント作成"}</Text>
           }
         </TouchableOpacity>
+        {isLogin && (
+          <TouchableOpacity onPress={handleForgotPassword} style={styles.forgotBtn}>
+            <Text style={styles.forgotText}>パスワードを忘れた方はこちら</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -95,4 +137,6 @@ const styles = StyleSheet.create({
   input: { backgroundColor: C.card, borderRadius: 10, padding: 14, fontSize: 15, color: C.text, marginBottom: 12, borderWidth: 1, borderColor: C.border },
   btn: { backgroundColor: C.primary, borderRadius: 10, padding: 16, alignItems: "center", marginTop: 8 },
   btnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  forgotBtn: { alignItems: "center", marginTop: 16 },
+  forgotText: { fontSize: 13, color: C.textSub, textDecorationLine: "underline" },
 });

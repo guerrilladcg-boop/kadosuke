@@ -28,17 +28,24 @@ export const useOrganizer = () => {
       .order("date", { ascending: true });
     setMyTournaments(data || []);
   }, [user]);
-  const applyOrganizer = async () => {
+  const applyOrganizer = async (xAccount, tonamelUrl) => {
     if (!user) return { error: "未ログイン" };
+    // organizer_applications に申請を INSERT（X/Tonamel情報付き）
+    const { error: appError } = await supabase
+      .from("organizer_applications")
+      .insert({
+        user_id: user.id,
+        status: "pending",
+        x_account: xAccount || null,
+        tonamel_url: tonamelUrl || null,
+      });
+    if (appError) return { error: appError };
+    // profiles の organizer_status を pending に更新
     const { error: profileError } = await supabase
       .from("profiles")
       .update({ organizer_status: "pending" })
       .eq("id", user.id);
     if (profileError) return { error: profileError };
-    const { error: appError } = await supabase
-      .from("organizer_applications")
-      .insert({ user_id: user.id, status: "pending" });
-    if (appError) return { error: appError };
     setOrganizerStatus("pending");
     return { error: null };
   };

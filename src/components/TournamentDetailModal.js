@@ -38,11 +38,21 @@ export default function TournamentDetailModal({ tournament, visible, onClose, on
           </View>
           <View style={styles.infoRow}>
             <Ionicons name="location-outline" size={16} color={C.textSub} />
-            <Text style={styles.infoText}>{tournament.location || "未設定"}</Text>
+            <Text style={styles.infoText}>
+              {tournament.location_type === "online" ? "オンライン" : (tournament.prefecture ? `${tournament.prefecture} - ` : "") + (tournament.location || "未設定")}
+            </Text>
           </View>
           <View style={styles.infoRow}>
             <Ionicons name="person-outline" size={16} color={C.textSub} />
             <Text style={styles.infoText}>{tournament.organizer}</Text>
+          </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="cash-outline" size={16} color={C.textSub} />
+            <Text style={styles.infoText}>
+              {tournament.entry_fee_type === "paid"
+                ? `有料${tournament.entry_fee_amount ? ` (¥${tournament.entry_fee_amount.toLocaleString()})` : ""}`
+                : "無料"}
+            </Text>
           </View>
           {tournament.max_players && (
             <View style={styles.infoRow}>

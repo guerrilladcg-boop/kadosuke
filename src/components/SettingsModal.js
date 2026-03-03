@@ -4,13 +4,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
 import { useProfile } from "../hooks/useProfile";
+import { usePremium } from "../hooks/usePremium";
 import ProfileImagePicker from "./ProfileImagePicker";
 import DisplayNameSwitcher from "./DisplayNameSwitcher";
+import PremiumModal from "./PremiumModal";
 
 export default function SettingsModal({ visible, onClose, profile: externalProfile }) {
   const insets = useSafeAreaInsets();
-  const { profile, fetchProfile, updateName, updateEmail, uploadAvatar, toggleNotifications, togglePublicProfile, updateDisplayNames, switchDisplayName } = useProfile();
+  const {
+    profile, fetchProfile, updateName, updateEmail, uploadAvatar,
+    toggleNotifications, toggleTournamentEntry, toggleFavoriteOrganizer, toggleSponsorItems,
+    updateDisplayNames, switchDisplayName,
+  } = useProfile();
+  const { isPremium, premiumType, purchasePremium, cancelPremium } = usePremium();
   const [showDisplayNames, setShowDisplayNames] = useState(false);
+  const [showPremium, setShowPremium] = useState(false);
   const [editingEmail, setEditingEmail] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [editingName, setEditingName] = useState(false);
@@ -51,13 +59,24 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
     }
   };
 
+  // 通知トグルハンドラ（楽観的更新は useProfile 側で対応済み）
   const handleToggleNotifications = async (value) => {
     const { error } = await toggleNotifications(value);
     if (error) Alert.alert("エラー", "設定の更新に失敗しました");
   };
 
-  const handleTogglePublic = async (value) => {
-    const { error } = await togglePublicProfile(value);
+  const handleToggleTournamentEntry = async (value) => {
+    const { error } = await toggleTournamentEntry(value);
+    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+  };
+
+  const handleToggleFavoriteOrganizer = async (value) => {
+    const { error } = await toggleFavoriteOrganizer(value);
+    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+  };
+
+  const handleToggleSponsorItems = async (value) => {
+    const { error } = await toggleSponsorItems(value);
     if (error) Alert.alert("エラー", "設定の更新に失敗しました");
   };
 
@@ -65,6 +84,9 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
     await updateDisplayNames(names);
     await switchDisplayName(activeIdx);
   };
+
+  // プッシュ通知の全体スイッチがOFFの場合、個別通知は無効化
+  const masterNotifEnabled = currentProfile?.push_notifications_enabled ?? true;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
@@ -120,7 +142,7 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
             </TouchableOpacity>
 
             {/* 表示名切り替え */}
-            <TouchableOpacity style={styles.settingItem} onPress={() => setShowDisplayNames(true)}>
+            <TouchableOpacity style={[styles.settingItem, { borderBottomWidth: 0 }]} onPress={() => setShowDisplayNames(true)}>
               <Text style={styles.settingLabel}>表示名の切り替え</Text>
               <View style={styles.settingValue}>
                 <Text style={styles.settingValueText}>
@@ -134,35 +156,99 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
           {/* 通知設定 */}
           <Text style={styles.sectionLabel}>通知</Text>
           <View style={styles.section}>
+            {/* マスタートグル */}
             <View style={styles.toggleItem}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.settingLabel}>プッシュ通知</Text>
-                <Text style={styles.settingDesc}>大会のお知らせやリマインダーを受け取る</Text>
+                <Text style={styles.settingDesc}>すべての通知を一括で切り替え</Text>
               </View>
               <Switch
-                value={currentProfile?.push_notifications_enabled ?? true}
+                value={masterNotifEnabled}
                 onValueChange={handleToggleNotifications}
+                trackColor={{ true: C.primary, false: C.border }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {/* 区切り線 */}
+            <View style={styles.divider} />
+
+            {/* エントリー済み大会の通知 */}
+            <View style={[styles.toggleItem, !masterNotifEnabled && styles.disabledItem]}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.notifLabelRow}>
+                  <Ionicons name="trophy-outline" size={16} color={masterNotifEnabled ? C.primary : C.textSub} />
+                  <Text style={[styles.settingLabel, !masterNotifEnabled && styles.disabledText]}>
+                    エントリー大会リマインダー
+                  </Text>
+                </View>
+                <Text style={styles.settingDesc}>参加予定の大会の開催通知</Text>
+              </View>
+              <Switch
+                value={(currentProfile?.notify_tournament_entry ?? true) && masterNotifEnabled}
+                onValueChange={handleToggleTournamentEntry}
+                disabled={!masterNotifEnabled}
+                trackColor={{ true: C.primary, false: C.border }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {/* お気に入り主催者の通知 */}
+            <View style={[styles.toggleItem, !masterNotifEnabled && styles.disabledItem]}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.notifLabelRow}>
+                  <Ionicons name="heart-outline" size={16} color={masterNotifEnabled ? "#EF4444" : C.textSub} />
+                  <Text style={[styles.settingLabel, !masterNotifEnabled && styles.disabledText]}>
+                    お気に入り主催者の新着
+                  </Text>
+                </View>
+                <Text style={styles.settingDesc}>フォロー中の主催者が大会を公開した時</Text>
+              </View>
+              <Switch
+                value={(currentProfile?.notify_favorite_organizer ?? true) && masterNotifEnabled}
+                onValueChange={handleToggleFavoriteOrganizer}
+                disabled={!masterNotifEnabled}
+                trackColor={{ true: C.primary, false: C.border }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {/* 目玉協賛商品の通知 */}
+            <View style={[styles.toggleItem, !masterNotifEnabled && styles.disabledItem]}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.notifLabelRow}>
+                  <Ionicons name="gift-outline" size={16} color={masterNotifEnabled ? "#D97706" : C.textSub} />
+                  <Text style={[styles.settingLabel, !masterNotifEnabled && styles.disabledText]}>
+                    目玉協賛商品のお知らせ
+                  </Text>
+                </View>
+                <Text style={styles.settingDesc}>注目の協賛商品が追加された時</Text>
+              </View>
+              <Switch
+                value={(currentProfile?.notify_sponsor_items ?? true) && masterNotifEnabled}
+                onValueChange={handleToggleSponsorItems}
+                disabled={!masterNotifEnabled}
                 trackColor={{ true: C.primary, false: C.border }}
                 thumbColor="#fff"
               />
             </View>
           </View>
 
-          {/* プライバシー */}
-          <Text style={styles.sectionLabel}>プライバシー</Text>
+          {/* プレミアムプラン */}
+          <Text style={styles.sectionLabel}>プラン</Text>
           <View style={styles.section}>
-            <View style={styles.toggleItem}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingLabel}>プロフィール公開</Text>
-                <Text style={styles.settingDesc}>他のユーザーにプロフィールを公開する</Text>
+            <TouchableOpacity style={[styles.settingItem, { borderBottomWidth: 0 }]} onPress={() => setShowPremium(true)}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="star" size={18} color="#FFD700" />
+                <Text style={styles.settingLabel}>プレミアムプラン</Text>
               </View>
-              <Switch
-                value={currentProfile?.is_public ?? true}
-                onValueChange={handleTogglePublic}
-                trackColor={{ true: C.primary, false: C.border }}
-                thumbColor="#fff"
-              />
-            </View>
+              <View style={styles.settingValue}>
+                <Text style={styles.settingValueText}>
+                  {isPremium ? (premiumType === "onetime" ? "買い切り" : "月額") : "未加入"}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+              </View>
+            </TouchableOpacity>
           </View>
 
           <View style={{ height: 40 }} />
@@ -228,6 +314,16 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
           profile={currentProfile}
           onSave={handleSaveDisplayNames}
         />
+
+        {/* プレミアムモーダル */}
+        <PremiumModal
+          visible={showPremium}
+          onClose={() => setShowPremium(false)}
+          isPremium={isPremium}
+          premiumType={premiumType}
+          onPurchase={purchasePremium}
+          onCancel={cancelPremium}
+        />
       </View>
     </Modal>
   );
@@ -248,10 +344,14 @@ const styles = StyleSheet.create({
   profileSub: { fontSize: 12, color: C.textSub, marginTop: 2 },
   settingItem: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: C.border },
   settingLabel: { fontSize: 15, color: C.text },
-  settingDesc: { fontSize: 12, color: C.textSub, marginTop: 2 },
+  settingDesc: { fontSize: 12, color: C.textSub, marginTop: 2, marginLeft: 24 },
   settingValue: { flexDirection: "row", alignItems: "center", gap: 4 },
   settingValueText: { fontSize: 14, color: C.textSub, maxWidth: 160 },
   toggleItem: { flexDirection: "row", alignItems: "center", padding: 16 },
+  divider: { height: 1, backgroundColor: C.border, marginHorizontal: 16 },
+  notifLabelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  disabledItem: { opacity: 0.5 },
+  disabledText: { color: C.textSub },
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 24 },
   editSheet: { backgroundColor: C.card, borderRadius: 16, padding: 20, width: "100%" },
   editTitle: { fontSize: 16, fontWeight: "bold", color: C.text, marginBottom: 8 },

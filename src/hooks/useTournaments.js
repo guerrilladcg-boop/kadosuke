@@ -36,6 +36,22 @@ export const useTournaments = () => {
     if (filters.location) {
       req = req.ilike("location", `%${filters.location}%`);
     }
+    // 参加費フィルター
+    if (filters.entryFeeType) {
+      req = req.eq("entry_fee_type", filters.entryFeeType);
+    }
+    // 開催形式フィルター
+    if (filters.locationType) {
+      req = req.eq("location_type", filters.locationType);
+    }
+    // 都道府県フィルター
+    if (filters.prefecture) {
+      req = req.eq("prefecture", filters.prefecture);
+    }
+    // タグフィルター（いずれかに一致）
+    if (filters.selectedTags && filters.selectedTags.length > 0) {
+      req = req.overlaps("tags", filters.selectedTags);
+    }
     const { data, error } = await req;
     if (!error) {
       let enriched = (data || []).map((t) => ({

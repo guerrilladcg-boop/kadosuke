@@ -3,10 +3,12 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Modal, ScrollView, ActivityIndicator, Alert
 } from "react-native";
-import { C, GAME_TITLES } from "../constants/theme";
+import { C } from "../constants/theme";
 import { useResults } from "../hooks/useResults";
+import { useMasterData } from "../hooks/useMasterData";
 export default function AddResultModal({ visible, onClose }) {
-  const [game, setGame] = useState(GAME_TITLES[0]);
+  const [game, setGame] = useState(null);
+  const { games: masterGames, loading: masterLoading } = useMasterData();
   const [name, setName] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [rank, setRank] = useState("");
@@ -14,8 +16,8 @@ export default function AddResultModal({ visible, onClose }) {
   const [loading, setLoading] = useState(false);
   const { addResult } = useResults();
   const handleSave = async () => {
-    if (!name || !rank || !date) {
-      Alert.alert("エラー", "大会名・順位・日付は必須です");
+    if (!name || !rank || !date || !game) {
+      Alert.alert("エラー", "ゲーム・大会名・順位・日付は必須です");
       return;
     }
     setLoading(true);
@@ -51,18 +53,22 @@ export default function AddResultModal({ visible, onClose }) {
           </TouchableOpacity>
         </View>
         <ScrollView style={styles.body}>
-          <Text style={styles.label}>ゲーム</Text>
-          <View style={styles.gameRow}>
-            {GAME_TITLES.map((g) => (
-              <TouchableOpacity
-                key={g.id}
-                style={[styles.gameBtn, game.id === g.id && { backgroundColor: g.color }]}
-                onPress={() => setGame(g)}
-              >
-                <Text style={[styles.gameBtnText, game.id === g.id && { color: "#fff" }]}>{g.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <Text style={styles.label}>ゲーム *</Text>
+          {masterLoading ? (
+            <ActivityIndicator color={C.primary} style={{ marginVertical: 10 }} />
+          ) : (
+            <View style={styles.gameRow}>
+              {masterGames.map((g) => (
+                <TouchableOpacity
+                  key={g.id}
+                  style={[styles.gameBtn, game?.id === g.id && { backgroundColor: g.color, borderColor: g.color }]}
+                  onPress={() => setGame(g)}
+                >
+                  <Text style={[styles.gameBtnText, game?.id === g.id && { color: "#fff" }]}>{g.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           <Text style={styles.label}>大会名 *</Text>
           <TextInput
             style={styles.input}

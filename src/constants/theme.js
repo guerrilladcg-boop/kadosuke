@@ -1,4 +1,4 @@
-﻿export const C = {
+export const C = {
   primary: '#E85D26',
   primaryLight: '#FF7A45',
   bg: '#F5F5F5',
@@ -12,14 +12,4 @@
   warning: '#D97706',
   danger: '#EF4444',
   pending: '#F59E0B',
-  shadowverse: '#4A90D9',
-  pokepoke: '#E8341C',
-  magic: '#A67C52',
-  yugioh: '#6B4C9A',
 };
-export const GAME_TITLES = [
-  { id: 'shadowverse', name: 'Shadowverse', color: '#4A90D9' },
-  { id: 'pokepoke',    name: 'ポケポケ',    color: '#E8341C' },
-  { id: 'magic',       name: 'Magic',       color: '#A67C52' },
-  { id: 'yugioh',      name: '遊戯王',      color: '#6B4C9A' },
-];
