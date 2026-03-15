@@ -248,6 +248,7 @@ export const useProfile = () => {
     // ゲーム別統計
     const gameMap = {};
     allResults.forEach((r) => {
+      if (!r.game) return;
       if (!gameMap[r.game]) gameMap[r.game] = { game: r.game, color: r.game_color, count: 0, wins: 0, losses: 0 };
       gameMap[r.game].count++;
       gameMap[r.game].wins += r.wins || 0;
@@ -261,13 +262,15 @@ export const useProfile = () => {
   // 自分の bio / メインデッキを更新
   const updateBio = async (bio) => {
     if (!user) return;
-    await supabase.from("profiles").update({ bio }).eq("id", user.id);
+    const { error } = await supabase.from("profiles").update({ bio }).eq("id", user.id);
+    if (error) { console.error(error.message); return; }
     await fetchProfile();
   };
 
   const updateMainDeck = async (mainDeck) => {
     if (!user) return;
-    await supabase.from("profiles").update({ main_deck: mainDeck }).eq("id", user.id);
+    const { error } = await supabase.from("profiles").update({ main_deck: mainDeck }).eq("id", user.id);
+    if (error) { console.error(error.message); return; }
     await fetchProfile();
   };
 
