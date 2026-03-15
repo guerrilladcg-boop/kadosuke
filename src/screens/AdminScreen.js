@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput, ActivityIndicator, Linking, Switch } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, TextInput, ActivityIndicator, Linking, Switch, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
@@ -21,7 +21,7 @@ export default function AdminScreen({ visible, onClose }) {
   const {
     applications, history, loading, approveApplication, rejectApplication,
     sponsorItems, sponsorLoading, fetchSponsorItems,
-    createSponsorItem, updateSponsorItem, toggleSponsorItemActive, drawLotteryWinner,
+    createSponsorItem, updateSponsorItem, toggleSponsorItemActive, deleteSponsorItem, drawLotteryWinner, uploadSponsorImage,
     pendingExchanges, completedExchanges, exchangesLoading, fulfillExchange,
     instantPrizesList, instantPrizesLoading,
     createInstantPrize, updateInstantPrize, deleteInstantPrize,
@@ -36,20 +36,25 @@ export default function AdminScreen({ visible, onClose }) {
   const [itemForm, setItemForm] = useState({
     name: "", description: "", icon: "🎁", point_cost: "", type: "exchange",
     sponsor_name: "", stock: "", sort_order: "0", delivery_type: "digital",
-    lottery_type: "application",
+    lottery_type: "application", lottery_start_at: "", lottery_end_at: "",
   });
+
+  // 商品画像
+  const [itemImageUri, setItemImageUri] = useState(null);
+  const [itemImageUploading, setItemImageUploading] = useState(false);
 
   // フルフィルメントモーダル
   const [fulfillModal, setFulfillModal] = useState(null);
   const [fulfillNote, setFulfillNote] = useState("");
   const [fulfillAction, setFulfillAction] = useState("");
+  const [fulfillGiftCode, setFulfillGiftCode] = useState("");
 
   // 即時抽選景品管理モーダル
   const [prizeModal, setPrizeModal] = useState(null);
   const [prizeForm, setPrizeForm] = useState({
     name: "", description: "", icon: "🎁",
-    probability_weight: "10", stock: "10",
-    is_winning: false, point_refund: "0",
+    probability_weight: "10", stock: "10", unlimitedStock: false,
+    is_winning: false, point_refund: "0", delivery_type: "digital",
   });
 
   // ========================================
@@ -82,13 +87,35 @@ export default function AdminScreen({ visible, onClose }) {
 
   const formatDate = (d) => d ? new Date(d).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 
+  // 日時のローカル表示用フォーマット（YYYY/MM/DD HH:mm）
+  const formatDateTimeLocal = (isoStr) => {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "";
+    const Y = d.getFullYear();
+    const M = String(d.getMonth() + 1).padStart(2, "0");
+    const D = String(d.getDate()).padStart(2, "0");
+    const h = String(d.getHours()).padStart(2, "0");
+    const m = String(d.getMinutes()).padStart(2, "0");
+    return `${Y}/${M}/${D} ${h}:${m}`;
+  };
+
+  // 日時入力のパース（YYYY/MM/DD HH:mm → ISO文字列）
+  const parseDateInput = (str) => {
+    if (!str || !str.trim()) return null;
+    const cleaned = str.replace(/\//g, "-").trim();
+    const d = new Date(cleaned);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  };
+
   const openCreateModal = () => {
     setEditingItem(null);
     setItemForm({
       name: "", description: "", icon: "🎁", point_cost: "", type: "exchange",
       sponsor_name: "", stock: "", sort_order: "0", delivery_type: "digital",
-      lottery_type: "application",
+      lottery_type: "application", lottery_start_at: "", lottery_end_at: "",
     });
+    setItemImageUri(null);
     setItemModal(true);
   };
 
@@ -105,8 +132,33 @@ export default function AdminScreen({ visible, onClose }) {
       sort_order: String(item.sort_order || 0),
       delivery_type: item.delivery_type || "digital",
       lottery_type: item.lottery_type || "application",
+      lottery_start_at: item.lottery_start_at ? formatDateTimeLocal(item.lottery_start_at) : "",
+      lottery_end_at: item.lottery_end_at ? formatDateTimeLocal(item.lottery_end_at) : "",
     });
+    setItemImageUri(item.image_url || null);
     setItemModal(true);
+  };
+
+  const pickItemImage = async () => {
+    try {
+      const ImagePicker = require("expo-image-picker");
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("権限エラー", "写真ライブラリへのアクセスを許可してください");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setItemImageUri(result.assets[0].uri);
+      }
+    } catch (e) {
+      Alert.alert("エラー", "画像の選択に失敗しました");
+    }
   };
 
   const handleSaveItem = async () => {
@@ -125,7 +177,26 @@ export default function AdminScreen({ visible, onClose }) {
       sort_order: parseInt(itemForm.sort_order, 10) || 0,
       delivery_type: itemForm.type === "exchange" ? itemForm.delivery_type : "digital",
       lottery_type: itemForm.type === "lottery" ? itemForm.lottery_type : null,
+      lottery_start_at: itemForm.type === "lottery" ? parseDateInput(itemForm.lottery_start_at) : null,
+      lottery_end_at: itemForm.type === "lottery" ? parseDateInput(itemForm.lottery_end_at) : null,
     };
+
+    // 新しいローカル画像が選択されている場合（既存のURLではない）
+    const isNewLocalImage = itemImageUri && !itemImageUri.startsWith("http");
+    if (isNewLocalImage) {
+      setItemImageUploading(true);
+      const tempId = editingItem?.id || Date.now().toString();
+      const { error: upErr, url } = await uploadSponsorImage(itemImageUri, tempId);
+      setItemImageUploading(false);
+      if (upErr) {
+        Alert.alert("画像アップロードエラー", `${upErr?.message || upErr?.error || upErr?.statusCode || String(upErr)}`);
+      } else {
+        payload.image_url = url;
+      }
+    } else if (itemImageUri === null && editingItem?.image_url) {
+      // 画像が削除された場合
+      payload.image_url = null;
+    }
 
     let result;
     if (editingItem) {
@@ -138,7 +209,7 @@ export default function AdminScreen({ visible, onClose }) {
       setItemModal(false);
       Alert.alert("保存完了", editingItem ? "商品情報を更新しました" : "新しい商品を追加しました");
     } else {
-      Alert.alert("エラー", "保存に失敗しました。もう一度お試しください");
+      Alert.alert("エラー", `保存に失敗しました: ${JSON.stringify(result.error)}`);
     }
   };
 
@@ -152,6 +223,21 @@ export default function AdminScreen({ visible, onClose }) {
         { text: isHide ? "非表示にする" : "公開する", onPress: async () => {
           const { error } = await toggleSponsorItemActive(item.id, item.is_active);
           if (error) Alert.alert("エラー", "更新に失敗しました");
+        }},
+      ]
+    );
+  };
+
+  const handleDeleteSponsorItem = (item) => {
+    Alert.alert(
+      "商品を削除",
+      `「${item.name}」を完全に削除しますか？\n\n関連する応募・交換履歴もすべて削除されます。\nこの操作は取り消せません。`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        { text: "削除する", style: "destructive", onPress: async () => {
+          const { error } = await deleteSponsorItem(item.id);
+          if (error) Alert.alert("エラー", "削除に失敗しました");
+          else Alert.alert("完了", "商品を削除しました");
         }},
       ]
     );
@@ -182,6 +268,7 @@ export default function AdminScreen({ visible, onClose }) {
     setFulfillModal(exchange);
     setFulfillAction(action);
     setFulfillNote(exchange.admin_note || "");
+    setFulfillGiftCode(exchange.gift_code || "");
   };
 
   const handleFulfill = async () => {
@@ -192,10 +279,11 @@ export default function AdminScreen({ visible, onClose }) {
     Alert.alert(`ステータスを変更`, `「${label}」に変更しますか？`, [
       { text: "戻る", style: "cancel" },
       { text: `${label}にする`, style: fulfillAction === "cancelled" ? "destructive" : "default", onPress: async () => {
-        const { error } = await fulfillExchange(fulfillModal.id, fulfillAction, fulfillNote);
+        const { error } = await fulfillExchange(fulfillModal.id, fulfillAction, fulfillNote, fulfillGiftCode);
         setFulfillModal(null);
         setFulfillNote("");
         setFulfillAction("");
+        setFulfillGiftCode("");
         if (!error) Alert.alert("更新完了", `ステータスを「${label}」に変更しました`);
         else Alert.alert("エラー", "更新に失敗しました");
       }},
@@ -211,8 +299,8 @@ export default function AdminScreen({ visible, onClose }) {
   const resetPrizeForm = () => {
     setPrizeForm({
       name: "", description: "", icon: "🎁",
-      probability_weight: "10", stock: "10",
-      is_winning: false, point_refund: "0",
+      probability_weight: "10", stock: "10", unlimitedStock: false,
+      is_winning: false, point_refund: "0", delivery_type: "digital",
     });
   };
 
@@ -220,9 +308,17 @@ export default function AdminScreen({ visible, onClose }) {
     if (!prizeModal) return;
     if (!prizeForm.name.trim()) { Alert.alert("入力エラー", "景品名を入力してください"); return; }
     const weight = parseInt(prizeForm.probability_weight, 10);
-    if (!weight || weight <= 0) { Alert.alert("入力エラー", "当選確率の重みは1以上にしてください"); return; }
-    const stock = parseInt(prizeForm.stock, 10);
-    if (isNaN(stock) || stock < 0) { Alert.alert("入力エラー", "在庫数は0以上にしてください"); return; }
+    if (!weight || weight <= 0) { Alert.alert("入力エラー", "確率は1%以上にしてください"); return; }
+    const stock = prizeForm.unlimitedStock ? null : parseInt(prizeForm.stock, 10);
+    if (stock !== null && (isNaN(stock) || stock < 0)) { Alert.alert("入力エラー", "在庫数は0以上にしてください"); return; }
+
+    // 既存景品の確率合計 + 新規を足して100%チェック
+    const existingPrizes = getPrizesForItem(prizeModal.id);
+    const currentTotal = existingPrizes.reduce((sum, p) => sum + p.probability_weight, 0);
+    if (currentTotal + weight > 100) {
+      Alert.alert("入力エラー", `確率の合計が100%を超えます。\n現在の合計: ${currentTotal}%\n残り: ${100 - currentTotal}%`);
+      return;
+    }
 
     const { error } = await createInstantPrize({
       item_id: prizeModal.id,
@@ -233,11 +329,17 @@ export default function AdminScreen({ visible, onClose }) {
       stock: stock,
       is_winning: prizeForm.is_winning,
       point_refund: parseInt(prizeForm.point_refund, 10) || 0,
+      delivery_type: prizeForm.delivery_type || "digital",
     });
 
     if (!error) {
       resetPrizeForm();
-      Alert.alert("追加完了", "景品を追加しました");
+      const newTotal = currentTotal + weight;
+      if (newTotal < 100) {
+        Alert.alert("追加完了", `景品を追加しました。\n\n確率合計: ${newTotal}% / 100%\n残り ${100 - newTotal}% を追加してください。`);
+      } else {
+        Alert.alert("追加完了", "景品を追加しました。確率合計が100%になりました！");
+      }
     } else {
       Alert.alert("エラー", "景品の追加に失敗しました");
     }
@@ -283,19 +385,19 @@ export default function AdminScreen({ visible, onClose }) {
                   <Text style={styles.dashAlertTitle}>未対応の交換が {pendingExchanges.length}件 あります</Text>
                   <Text style={styles.dashAlertSub}>発送・コード送付などの対応が必要です</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={C.textSub} />
+                <Ionicons name="chevron-forward" size={20} color="#B45309" />
               </TouchableOpacity>
             )}
             {applications.length > 0 && (
-              <TouchableOpacity style={styles.dashAlertCard} onPress={() => setActiveTab("pending")}>
+              <TouchableOpacity style={[styles.dashAlertCard, { backgroundColor: "#EFF6FF", borderLeftColor: "#2563EB" }]} onPress={() => setActiveTab("pending")}>
                 <View style={[styles.dashAlertIconWrap, { backgroundColor: "#DBEAFE" }]}>
                   <Ionicons name="person-add-outline" size={22} color="#2563EB" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.dashAlertTitle}>主催者申請が {applications.length}件 あります</Text>
-                  <Text style={styles.dashAlertSub}>承認・却下の判断が必要です</Text>
+                  <Text style={[styles.dashAlertTitle, { color: "#1E40AF" }]}>主催者申請が {applications.length}件 あります</Text>
+                  <Text style={[styles.dashAlertSub, { color: "#2563EB" }]}>承認・却下の判断が必要です</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={C.textSub} />
+                <Ionicons name="chevron-forward" size={20} color="#2563EB" />
               </TouchableOpacity>
             )}
           </>
@@ -306,21 +408,21 @@ export default function AdminScreen({ visible, onClose }) {
           <Text style={styles.dashSectionTitle}>クイックアクション</Text>
         </View>
         <View style={styles.dashGrid}>
-          <TouchableOpacity style={styles.dashTile} onPress={() => { setActiveTab("sponsor"); setTimeout(openCreateModal, 300); }}>
-            <View style={[styles.dashTileIcon, { backgroundColor: "#FFF5F0" }]}>
-              <Ionicons name="add-circle-outline" size={26} color={C.primary} />
+          <TouchableOpacity style={[styles.dashTile, { backgroundColor: C.primary, borderColor: C.primary }]} onPress={() => { setActiveTab("sponsor"); setTimeout(openCreateModal, 300); }}>
+            <View style={[styles.dashTileIcon, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
+              <Ionicons name="add-circle-outline" size={28} color="#fff" />
             </View>
-            <Text style={styles.dashTileLabel}>新しい商品を{"\n"}追加する</Text>
+            <Text style={[styles.dashTileLabel, { color: "#fff" }]}>新しい商品を{"\n"}追加する</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.dashTile} onPress={() => setActiveTab("sponsor")}>
             <View style={[styles.dashTileIcon, { backgroundColor: "#EFF6FF" }]}>
-              <Ionicons name="create-outline" size={26} color="#2563EB" />
+              <Ionicons name="create-outline" size={24} color="#2563EB" />
             </View>
             <Text style={styles.dashTileLabel}>既存の商品を{"\n"}編集する</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.dashTile} onPress={() => setActiveTab("exchanges")}>
             <View style={[styles.dashTileIcon, { backgroundColor: "#F0FDF4" }]}>
-              <Ionicons name="checkmark-done-outline" size={26} color="#16A34A" />
+              <Ionicons name="checkmark-done-outline" size={24} color="#16A34A" />
             </View>
             <Text style={styles.dashTileLabel}>交換の発送{"\n"}対応をする</Text>
           </TouchableOpacity>
@@ -376,7 +478,7 @@ export default function AdminScreen({ visible, onClose }) {
       <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
         {/* セクション説明 */}
         <View style={styles.sectionDesc}>
-          <Ionicons name="information-circle-outline" size={16} color="#3B82F6" />
+          <Ionicons name="information-circle-outline" size={16} color={C.textSub} />
           <Text style={styles.sectionDescText}>
             ここではアプリに表示する商品（交換・抽選）を追加・編集できます。
             即時抽選の場合は、商品を作成後に「景品を設定」から景品を登録してください。
@@ -439,7 +541,11 @@ export default function AdminScreen({ visible, onClose }) {
       <View key={item.id} style={[styles.card, { borderLeftWidth: 4, borderLeftColor: borderColor }, !item.is_active && styles.cardInactive]}>
         {/* ヘッダー */}
         <View style={styles.sponsorCardHeader}>
-          <Text style={styles.sponsorIcon}>{item.icon}</Text>
+          {item.image_url ? (
+            <Image source={{ uri: item.image_url }} style={styles.sponsorThumb} />
+          ) : (
+            <Text style={styles.sponsorIcon}>{item.icon}</Text>
+          )}
           <View style={{ flex: 1 }}>
             <Text style={[styles.cardTitle, !item.is_active && { opacity: 0.5 }]} numberOfLines={1}>
               {item.name}
@@ -462,8 +568,22 @@ export default function AdminScreen({ visible, onClose }) {
           </View>
         )}
 
+        {/* 抽選期間表示 */}
+        {isLottery && (item.lottery_start_at || item.lottery_end_at) && (
+          <View style={styles.infoRow}>
+            <Ionicons name="calendar-outline" size={14} color={C.textSub} />
+            <Text style={styles.infoRowText}>
+              期間: {item.lottery_start_at ? formatDateTimeLocal(item.lottery_start_at) : "未設定"}
+              {" 〜 "}
+              {item.lottery_end_at ? formatDateTimeLocal(item.lottery_end_at) : "未設定"}
+            </Text>
+          </View>
+        )}
+
         {/* 応募抽選の統計 */}
         {isApplication && (
+          <>
+          <View style={{ height: 1, backgroundColor: C.border, marginVertical: 6 }} />
           <View style={styles.statsBar}>
             <View style={styles.statItem}>
               <Ionicons name="people-outline" size={14} color={C.textSub} />
@@ -493,31 +613,47 @@ export default function AdminScreen({ visible, onClose }) {
               </>
             )}
           </View>
+          </>
         )}
 
         {/* 即時抽選の景品サマリー */}
-        {isInstant && itemPrizes.length > 0 && (
-          <View style={styles.prizeSummaryBox}>
-            <Text style={styles.prizeSummaryTitle}>登録済み景品 ({itemPrizes.length})</Text>
-            {itemPrizes.map((p) => (
-              <View key={p.id} style={styles.prizeSummaryRow}>
-                <Text style={{ fontSize: 14 }}>{p.icon}</Text>
-                <Text style={[styles.prizeSummaryName, !p.is_winning && { color: C.textSub }]} numberOfLines={1}>
-                  {p.name}
-                </Text>
-                <View style={[styles.prizeMiniTag, p.is_winning ? { backgroundColor: "#DCFCE7" } : { backgroundColor: "#F3F4F6" }]}>
-                  <Text style={[styles.prizeMiniTagText, { color: p.is_winning ? "#16A34A" : C.textSub }]}>
-                    {p.is_winning ? "当たり" : "はずれ"}
-                  </Text>
-                </View>
-                <Text style={styles.prizeSummaryDetail}>重み{p.probability_weight}</Text>
-                <Text style={[styles.prizeSummaryStock, p.stock <= 0 && { color: C.danger }]}>
-                  残{p.stock}
+        {isInstant && itemPrizes.length > 0 && (() => {
+          const totalProb = itemPrizes.reduce((sum, p) => sum + p.probability_weight, 0);
+          return (
+            <View style={styles.prizeSummaryBox}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <Text style={styles.prizeSummaryTitle}>登録済み景品 ({itemPrizes.length})</Text>
+                <Text style={[styles.prizeSummaryTitle, totalProb !== 100 && { color: C.danger }]}>
+                  合計: {totalProb}%{totalProb !== 100 ? " ⚠️" : " ✓"}
                 </Text>
               </View>
-            ))}
-          </View>
-        )}
+              {totalProb !== 100 && (
+                <View style={{ backgroundColor: "#FEF2F2", borderRadius: 6, padding: 8, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, color: C.danger, fontWeight: "600" }}>
+                    確率の合計が100%ではありません（残り{100 - totalProb}%）
+                  </Text>
+                </View>
+              )}
+              {itemPrizes.map((p) => (
+                <View key={p.id} style={styles.prizeSummaryRow}>
+                  <Text style={{ fontSize: 14 }}>{p.icon}</Text>
+                  <Text style={[styles.prizeSummaryName, !p.is_winning && { color: C.textSub }]} numberOfLines={1}>
+                    {p.name}
+                  </Text>
+                  <View style={[styles.prizeMiniTag, p.is_winning ? { backgroundColor: "#DCFCE7" } : { backgroundColor: "#F3F4F6" }]}>
+                    <Text style={[styles.prizeMiniTagText, { color: p.is_winning ? "#16A34A" : C.textSub }]}>
+                      {p.is_winning ? "当たり" : "はずれ"}
+                    </Text>
+                  </View>
+                  <Text style={styles.prizeSummaryDetail}>{p.probability_weight}%</Text>
+                  <Text style={[styles.prizeSummaryStock, p.stock !== null && p.stock <= 0 && { color: C.danger }]}>
+                    {p.stock === null ? "∞" : `残${p.stock}`}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          );
+        })()}
         {isInstant && itemPrizes.length === 0 && (
           <View style={styles.noPrizeWarning}>
             <Ionicons name="warning-outline" size={16} color="#D97706" />
@@ -533,36 +669,44 @@ export default function AdminScreen({ visible, onClose }) {
           </View>
         )}
 
-        {/* アクションボタン群 */}
+        {/* アクションボタン群（2段構成） */}
         <View style={styles.actionBar}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => openEditModal(item)}>
-            <Ionicons name="create-outline" size={16} color={C.primary} />
-            <Text style={[styles.actionBtnText, { color: C.primary }]}>編集する</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionBtn, item.is_active ? styles.actionBtnDanger : styles.actionBtnSuccess]}
-            onPress={() => handleToggleActive(item)}
-          >
-            <Ionicons name={item.is_active ? "eye-off-outline" : "eye-outline"} size={16} color={item.is_active ? C.danger : C.success} />
-            <Text style={[styles.actionBtnText, { color: item.is_active ? C.danger : C.success }]}>
-              {item.is_active ? "非公開にする" : "公開する"}
-            </Text>
-          </TouchableOpacity>
-
+          {/* 主要アクション（全幅） */}
           {isInstant && (
             <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: "#7C3AED" }]} onPress={() => openPrizeModal(item)}>
-              <Ionicons name="gift-outline" size={16} color="#fff" />
-              <Text style={styles.actionBtnFilledText}>景品を設定</Text>
+              <Ionicons name="gift-outline" size={18} color="#fff" />
+              <Text style={styles.actionBtnFilledText}>景品を設定する</Text>
             </TouchableOpacity>
           )}
-
           {isApplication && !isDrawn && item.lottery_status !== "closed" && (
             <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: C.warning }]} onPress={() => handleDrawLottery(item)}>
-              <Ionicons name="dice-outline" size={16} color="#fff" />
+              <Ionicons name="dice-outline" size={18} color="#fff" />
               <Text style={styles.actionBtnFilledText}>当選者を決める</Text>
             </TouchableOpacity>
           )}
+          {/* 編集・公開切替・削除（横並び） */}
+          <View style={styles.actionBarRow}>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => openEditModal(item)}>
+              <Ionicons name="create-outline" size={16} color={C.primary} />
+              <Text style={[styles.actionBtnText, { color: C.primary }]}>編集</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, item.is_active ? styles.actionBtnDanger : styles.actionBtnSuccess]}
+              onPress={() => handleToggleActive(item)}
+            >
+              <Ionicons name={item.is_active ? "eye-off-outline" : "eye-outline"} size={16} color={item.is_active ? C.danger : C.success} />
+              <Text style={[styles.actionBtnText, { color: item.is_active ? C.danger : C.success }]}>
+                {item.is_active ? "非公開" : "公開"}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.actionBtnDanger]}
+              onPress={() => handleDeleteSponsorItem(item)}
+            >
+              <Ionicons name="trash-outline" size={16} color={C.danger} />
+              <Text style={[styles.actionBtnText, { color: C.danger }]}>削除</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -579,7 +723,7 @@ export default function AdminScreen({ visible, onClose }) {
     return (
       <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionDesc}>
-          <Ionicons name="information-circle-outline" size={16} color="#3B82F6" />
+          <Ionicons name="information-circle-outline" size={16} color={C.textSub} />
           <Text style={styles.sectionDescText}>
             ユーザーがポイントで交換した商品の発送・対応状況を管理できます。
             配送アイテムは「発送済み→完了」、デジタルは「対応済み」に変更してください。
@@ -626,9 +770,13 @@ export default function AdminScreen({ visible, onClose }) {
     const sc = statusConfig[ex.status] || statusConfig.pending;
 
     return (
-      <View key={ex.id} style={styles.card}>
+      <View key={ex.id} style={[styles.card, { borderLeftWidth: 4, borderLeftColor: isPhysical ? "#2563EB" : "#7C3AED" }]}>
         <View style={styles.exchangeCardHeader}>
-          <Text style={styles.sponsorIcon}>{ex.sponsor_items?.icon || "🎁"}</Text>
+          {ex.sponsor_items?.image_url ? (
+            <Image source={{ uri: ex.sponsor_items.image_url }} style={styles.sponsorThumb} />
+          ) : (
+            <Text style={styles.sponsorIcon}>{ex.sponsor_items?.icon || "🎁"}</Text>
+          )}
           <View style={{ flex: 1 }}>
             <Text style={styles.cardTitle}>{ex.sponsor_items?.name || "不明な商品"}</Text>
             <Text style={styles.cardSubtitle}>
@@ -641,6 +789,45 @@ export default function AdminScreen({ visible, onClose }) {
           </View>
         </View>
 
+        {/* 配送アイテムのステータス進捗バー */}
+        {isPhysical && !isHistory && ex.status !== "cancelled" && (
+          <View style={styles.progressStrip}>
+            {[
+              { key: "pending", label: "対応待ち" },
+              { key: "shipped", label: "発送済み" },
+              { key: "completed", label: "配送完了" },
+            ].map((step, idx) => {
+              const stepStatuses = ["pending", "shipped", "completed"];
+              const currentIdx = stepStatuses.indexOf(ex.status);
+              const isStepDone = idx <= currentIdx;
+              const isCurrentStep = idx === currentIdx;
+              return (
+                <React.Fragment key={step.key}>
+                  <View style={[
+                    styles.progressStep,
+                    isStepDone && styles.progressStepDone,
+                    isCurrentStep && styles.progressStepCurrent,
+                  ]}>
+                    <Text style={[
+                      styles.progressStepText,
+                      isStepDone && !isCurrentStep && styles.progressStepTextDone,
+                      isCurrentStep && { color: "#fff" },
+                    ]}>
+                      {step.label}
+                    </Text>
+                  </View>
+                  {idx < 2 && (
+                    <View style={[
+                      styles.progressLine,
+                      isStepDone && idx < currentIdx && styles.progressLineDone,
+                    ]} />
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </View>
+        )}
+
         <View style={styles.detailBox}>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>消費ポイント</Text>
@@ -652,9 +839,11 @@ export default function AdminScreen({ visible, onClose }) {
           </View>
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>受渡し方法</Text>
-            <Text style={[styles.detailValue, { fontWeight: "bold" }]}>
-              {isPhysical ? "📦 配送（住所あり）" : "🎫 デジタル（コード等）"}
-            </Text>
+            <View style={[styles.deliveryTypeBadge, isPhysical ? { backgroundColor: "#DBEAFE" } : { backgroundColor: "#F3E8FF" }]}>
+              <Text style={[styles.deliveryTypeBadgeText, isPhysical ? { color: "#1D4ED8" } : { color: "#6D28D9" }]}>
+                {isPhysical ? "📦 配送" : "🎫 デジタル"}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -686,21 +875,22 @@ export default function AdminScreen({ visible, onClose }) {
 
         {!isHistory && (
           <View style={styles.actionBar}>
+            {/* 主要アクション（全幅） */}
             {isPhysical && ex.status === "pending" && (
               <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: "#2563EB" }]} onPress={() => openFulfillModal(ex, "shipped")}>
-                <Ionicons name="cube-outline" size={16} color="#fff" />
+                <Ionicons name="cube-outline" size={18} color="#fff" />
                 <Text style={styles.actionBtnFilledText}>発送済みにする</Text>
               </TouchableOpacity>
             )}
             {isPhysical && ex.status === "shipped" && (
               <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: C.success }]} onPress={() => openFulfillModal(ex, "completed")}>
-                <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+                <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
                 <Text style={styles.actionBtnFilledText}>配送完了にする</Text>
               </TouchableOpacity>
             )}
             {!isPhysical && ex.status === "pending" && (
               <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: C.success }]} onPress={() => openFulfillModal(ex, "completed")}>
-                <Ionicons name="checkmark-circle-outline" size={16} color="#fff" />
+                <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
                 <Text style={styles.actionBtnFilledText}>対応済みにする</Text>
               </TouchableOpacity>
             )}
@@ -730,8 +920,8 @@ export default function AdminScreen({ visible, onClose }) {
           <View style={styles.headerBtn} />
         </View>
 
-        {/* タブバー（アイコン付き） */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabRow} contentContainerStyle={styles.tabRowContent}>
+        {/* タブバー（固定5等分） */}
+        <View style={styles.tabRow}>
           {TAB_CONFIG.map((t) => {
             const isActive = activeTab === t.key;
             const badgeCount = t.key === "exchanges" ? pendingExchanges.length : t.key === "pending" ? applications.length : 0;
@@ -742,7 +932,7 @@ export default function AdminScreen({ visible, onClose }) {
                 onPress={() => setActiveTab(t.key)}
               >
                 <View style={{ position: "relative" }}>
-                  <Ionicons name={t.icon} size={18} color={isActive ? C.primary : C.textSub} />
+                  <Ionicons name={t.icon} size={isActive ? 20 : 18} color={isActive ? C.primary : C.textSub} />
                   {badgeCount > 0 && (
                     <View style={styles.tabBadge}>
                       <Text style={styles.tabBadgeText}>{badgeCount}</Text>
@@ -755,7 +945,7 @@ export default function AdminScreen({ visible, onClose }) {
               </TouchableOpacity>
             );
           })}
-        </ScrollView>
+        </View>
 
         {/* タブコンテンツ */}
         {activeTab === "dashboard" ? (
@@ -771,7 +961,7 @@ export default function AdminScreen({ visible, onClose }) {
             {activeTab === "pending" ? (
               <>
                 <View style={styles.sectionDesc}>
-                  <Ionicons name="information-circle-outline" size={16} color="#3B82F6" />
+                  <Ionicons name="information-circle-outline" size={16} color={C.textSub} />
                   <Text style={styles.sectionDescText}>
                     大会主催者になりたいユーザーからの申請です。SNSアカウント等を確認して承認・却下してください。
                   </Text>
@@ -899,27 +1089,51 @@ export default function AdminScreen({ visible, onClose }) {
                  fulfillAction === "completed" ? "対応完了に変更" : "この交換をキャンセル"}
               </Text>
               <View style={styles.fulfillItemInfo}>
-                <Text style={{ fontSize: 20 }}>{fulfillModal?.sponsor_items?.icon}</Text>
+                <Text style={{ fontSize: 20 }}>{fulfillModal?.prize_icon || fulfillModal?.sponsor_items?.icon}</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle}>{fulfillModal?.sponsor_items?.name}</Text>
-                  <Text style={styles.cardSubtitle}>送り先: {fulfillModal?.profiles?.name}</Text>
+                  <Text style={styles.cardTitle}>
+                    {fulfillModal?.prize_name || fulfillModal?.sponsor_items?.name}
+                  </Text>
+                  <Text style={styles.cardSubtitle}>
+                    送り先: {fulfillModal?.profiles?.name}
+                    {fulfillModal?.type === "instant_lottery_win" && " (即時抽選当選)"}
+                  </Text>
                 </View>
               </View>
+
+              {/* ギフトコード入力（ギフトコード配送タイプの場合） */}
+              {fulfillModal?.delivery_type === "gift_code" && fulfillAction === "completed" && (
+                <>
+                  <Text style={styles.formLabel}>
+                    ギフトコード <Text style={{ color: C.danger }}>*</Text>
+                  </Text>
+                  <TextInput
+                    style={[styles.modalInput, { fontFamily: "monospace", fontSize: 16, letterSpacing: 1 }]}
+                    placeholder="例: XXXX-XXXX-XXXX"
+                    placeholderTextColor={C.textSub}
+                    value={fulfillGiftCode}
+                    onChangeText={setFulfillGiftCode}
+                    autoCapitalize="characters"
+                  />
+                  <Text style={{ fontSize: 11, color: C.textSub, marginBottom: 8 }}>
+                    ユーザーの交換履歴にこのコードが表示されます
+                  </Text>
+                </>
+              )}
+
               <Text style={styles.formLabel}>
-                管理者メモ（追跡番号・バウチャーコード等）
+                管理者メモ（追跡番号・備考等）
               </Text>
               <TextInput
                 style={styles.modalInput}
-                placeholder={fulfillAction === "completed" && !(fulfillModal?.delivery_type === "physical")
-                  ? "例: バウチャーコードやURL等"
-                  : "例: 追跡番号や備考等"}
+                placeholder="例: 追跡番号や備考等"
                 placeholderTextColor={C.textSub}
                 value={fulfillNote}
                 onChangeText={setFulfillNote}
                 multiline
               />
               <View style={styles.modalActions}>
-                <TouchableOpacity style={styles.modalCancelBtn} onPress={() => { setFulfillModal(null); setFulfillNote(""); setFulfillAction(""); }}>
+                <TouchableOpacity style={styles.modalCancelBtn} onPress={() => { setFulfillModal(null); setFulfillNote(""); setFulfillAction(""); setFulfillGiftCode(""); }}>
                   <Text style={styles.modalCancelText}>キャンセル</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -966,6 +1180,37 @@ export default function AdminScreen({ visible, onClose }) {
                   onChangeText={(v) => setItemForm({ ...itemForm, description: v })}
                   multiline
                 />
+
+                <Text style={styles.formLabel}>商品画像（任意）</Text>
+                <Text style={{ fontSize: 11, color: C.textSub, marginBottom: 6 }}>
+                  画像がある場合はアイコン絵文字より優先して表示されます
+                </Text>
+                {itemImageUri ? (
+                  <View style={styles.imagePreviewContainer}>
+                    <Image source={{ uri: itemImageUri }} style={styles.imagePreview} />
+                    <View style={styles.imagePreviewActions}>
+                      <TouchableOpacity style={styles.imagePreviewBtn} onPress={pickItemImage}>
+                        <Ionicons name="camera-outline" size={16} color={C.primary} />
+                        <Text style={styles.imagePreviewBtnText}>変更</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.imagePreviewBtn} onPress={() => setItemImageUri(null)}>
+                        <Ionicons name="trash-outline" size={16} color={C.danger} />
+                        <Text style={[styles.imagePreviewBtnText, { color: C.danger }]}>削除</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.imagePickerBtn} onPress={pickItemImage}>
+                    <Ionicons name="image-outline" size={28} color={C.textSub} />
+                    <Text style={styles.imagePickerBtnText}>タップして画像を選択</Text>
+                  </TouchableOpacity>
+                )}
+                {itemImageUploading && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                    <ActivityIndicator size="small" color={C.primary} />
+                    <Text style={{ fontSize: 12, color: C.textSub }}>アップロード中...</Text>
+                  </View>
+                )}
 
                 <View style={styles.formRow}>
                   <View style={{ flex: 1 }}>
@@ -1031,6 +1276,38 @@ export default function AdminScreen({ visible, onClose }) {
                         <Text style={[styles.typeOptionLabel, itemForm.lottery_type === "application" && styles.typeOptionLabelActive]}>応募抽選</Text>
                         <Text style={styles.typeOptionDesc}>後日当選発表</Text>
                       </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+
+                {/* 抽選期間入力 */}
+                {itemForm.type === "lottery" && (
+                  <>
+                    <Text style={styles.formLabel}>抽選期間</Text>
+                    <Text style={{ fontSize: 11, color: C.textSub, marginBottom: 6 }}>
+                      期間外になると自動的にユーザーに非表示になります。空欄の場合は常時表示されます。
+                    </Text>
+                    <View style={styles.formRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.formLabel}>開始日時</Text>
+                        <TextInput
+                          style={styles.formInput}
+                          placeholder="例: 2026/03/15 12:00"
+                          placeholderTextColor={C.textSub}
+                          value={itemForm.lottery_start_at}
+                          onChangeText={(v) => setItemForm({ ...itemForm, lottery_start_at: v })}
+                        />
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={styles.formLabel}>終了日時</Text>
+                        <TextInput
+                          style={styles.formInput}
+                          placeholder="例: 2026/03/31 23:59"
+                          placeholderTextColor={C.textSub}
+                          value={itemForm.lottery_end_at}
+                          onChangeText={(v) => setItemForm({ ...itemForm, lottery_end_at: v })}
+                        />
+                      </View>
                     </View>
                   </>
                 )}
@@ -1135,13 +1412,38 @@ export default function AdminScreen({ visible, onClose }) {
               )}
 
               <View style={styles.sectionDesc}>
-                <Ionicons name="information-circle-outline" size={16} color="#3B82F6" />
+                <Ionicons name="information-circle-outline" size={16} color={C.textSub} />
                 <Text style={styles.sectionDescText}>
                   ユーザーがルーレットを回したときに出る景品を登録します。{"\n"}
                   「当たり」と「はずれ」の両方を登録してください。{"\n"}
-                  確率の重みが大きいほど出やすくなります（例: 当たり5 + はずれ95 → 当たり率5%）
+                  確率は%で入力し、合計が100%になるようにしてください。
                 </Text>
               </View>
+
+              {/* 確率合計バー */}
+              {prizeModal && (() => {
+                const prizes = getPrizesForItem(prizeModal.id);
+                const totalProb = prizes.reduce((sum, p) => sum + p.probability_weight, 0);
+                if (prizes.length === 0) return null;
+                return (
+                  <View style={{ backgroundColor: totalProb === 100 ? "#DCFCE7" : "#FEF2F2", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Text style={{ fontSize: 13, fontWeight: "bold", color: totalProb === 100 ? "#16A34A" : C.danger }}>
+                        確率合計: {totalProb}% / 100%
+                      </Text>
+                      {totalProb !== 100 && (
+                        <Text style={{ fontSize: 12, color: C.danger }}>残り {100 - totalProb}%</Text>
+                      )}
+                      {totalProb === 100 && (
+                        <Text style={{ fontSize: 12, color: "#16A34A" }}>✓ OK</Text>
+                      )}
+                    </View>
+                    <View style={{ height: 6, backgroundColor: "rgba(0,0,0,0.1)", borderRadius: 3, marginTop: 8 }}>
+                      <View style={{ height: 6, borderRadius: 3, backgroundColor: totalProb === 100 ? "#16A34A" : totalProb > 100 ? C.danger : C.warning, width: `${Math.min(totalProb, 100)}%` }} />
+                    </View>
+                  </View>
+                );
+              })()}
 
               {/* 既存景品一覧 */}
               <View style={styles.sectionLabelRow}>
@@ -1171,8 +1473,9 @@ export default function AdminScreen({ visible, onClose }) {
                           </View>
                         </View>
                         <Text style={styles.cardSubtitle}>
-                          確率の重み: {prize.probability_weight} ・ 残り在庫: {prize.stock}
+                          確率: {prize.probability_weight}% ・ 残り在庫: {prize.stock === null ? "無制限" : prize.stock}
                           {prize.point_refund > 0 && ` ・ ポイント還元: ${prize.point_refund}pt`}
+                          {` ・ ${prize.delivery_type === "physical" ? "📦郵送" : prize.delivery_type === "gift_code" ? "🎫コード" : "💻デジタル"}`}
                         </Text>
                       </View>
                       <TouchableOpacity onPress={() => handleDeletePrize(prize)} style={styles.deletePrizeBtn}>
@@ -1222,7 +1525,7 @@ export default function AdminScreen({ visible, onClose }) {
 
                 <View style={styles.formRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.formLabel}>確率の重み <Text style={{ color: C.danger }}>*</Text></Text>
+                    <Text style={styles.formLabel}>確率 (%) <Text style={{ color: C.danger }}>*</Text></Text>
                     <TextInput
                       style={styles.formInput}
                       placeholder="例: 5"
@@ -1233,15 +1536,21 @@ export default function AdminScreen({ visible, onClose }) {
                     />
                   </View>
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.formLabel}>在庫数 <Text style={{ color: C.danger }}>*</Text></Text>
-                    <TextInput
-                      style={styles.formInput}
-                      placeholder="例: 3"
-                      placeholderTextColor={C.textSub}
-                      value={prizeForm.stock}
-                      onChangeText={(v) => setPrizeForm({ ...prizeForm, stock: v })}
-                      keyboardType="number-pad"
-                    />
+                    <Text style={styles.formLabel}>在庫数</Text>
+                    {prizeForm.unlimitedStock ? (
+                      <View style={[styles.formInput, { justifyContent: "center" }]}>
+                        <Text style={{ color: C.textSub, fontSize: 14 }}>∞ 無制限</Text>
+                      </View>
+                    ) : (
+                      <TextInput
+                        style={styles.formInput}
+                        placeholder="例: 3"
+                        placeholderTextColor={C.textSub}
+                        value={prizeForm.stock}
+                        onChangeText={(v) => setPrizeForm({ ...prizeForm, stock: v })}
+                        keyboardType="number-pad"
+                      />
+                    )}
                   </View>
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.formLabel}>pt還元</Text>
@@ -1258,6 +1567,21 @@ export default function AdminScreen({ visible, onClose }) {
 
                 <View style={styles.switchRow}>
                   <View>
+                    <Text style={[styles.formLabel, { marginTop: 0 }]}>在庫を無制限にする</Text>
+                    <Text style={{ fontSize: 11, color: C.textSub }}>
+                      ONにすると在庫が減りません
+                    </Text>
+                  </View>
+                  <Switch
+                    value={prizeForm.unlimitedStock}
+                    onValueChange={(v) => setPrizeForm({ ...prizeForm, unlimitedStock: v })}
+                    trackColor={{ true: "#7C3AED" }}
+                    thumbColor="#fff"
+                  />
+                </View>
+
+                <View style={styles.switchRow}>
+                  <View>
                     <Text style={[styles.formLabel, { marginTop: 0 }]}>これは「当たり」景品ですか？</Text>
                     <Text style={{ fontSize: 11, color: C.textSub }}>
                       ONにするとユーザーに当選演出が表示されます
@@ -1270,6 +1594,40 @@ export default function AdminScreen({ visible, onClose }) {
                     thumbColor="#fff"
                   />
                 </View>
+
+                {prizeForm.is_winning && (
+                  <>
+                    <Text style={[styles.formLabel, { marginTop: 14 }]}>配送タイプ</Text>
+                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 4 }}>
+                      {[
+                        { value: "digital", label: "💻 デジタル" },
+                        { value: "physical", label: "📦 郵送" },
+                        { value: "gift_code", label: "🎫 ギフトコード" },
+                      ].map((opt) => (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[
+                            styles.deliveryTypeBtn,
+                            prizeForm.delivery_type === opt.value && styles.deliveryTypeBtnActive,
+                          ]}
+                          onPress={() => setPrizeForm({ ...prizeForm, delivery_type: opt.value })}
+                        >
+                          <Text style={[
+                            styles.deliveryTypeBtnText,
+                            prizeForm.delivery_type === opt.value && styles.deliveryTypeBtnTextActive,
+                          ]}>
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={{ fontSize: 11, color: C.textSub }}>
+                      {prizeForm.delivery_type === "physical" ? "当選者に配送先を入力してもらいます" :
+                       prizeForm.delivery_type === "gift_code" ? "管理画面からギフトコードを入力して配布します" :
+                       "手動で対応してください"}
+                    </Text>
+                  </>
+                )}
 
                 <TouchableOpacity style={[styles.actionBtnFilled, { backgroundColor: "#7C3AED", marginTop: 16 }]} onPress={handleAddPrize}>
                   <Ionicons name="add-circle" size={18} color="#fff" />
@@ -1293,21 +1651,20 @@ const styles = StyleSheet.create({
   headerBtn: { minWidth: 60, alignItems: "center" },
   cancel: { fontSize: 15, color: C.primary, fontWeight: "bold" },
 
-  // タブバー
-  tabRow: { backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border, maxHeight: 56 },
-  tabRowContent: { flexDirection: "row", paddingHorizontal: 4 },
-  tab: { alignItems: "center", paddingVertical: 8, paddingHorizontal: 14, gap: 2 },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: C.primary },
+  // タブバー（固定5等分）
+  tabRow: { flexDirection: "row", backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
+  tab: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 10, paddingHorizontal: 2, gap: 3, minHeight: 56 },
+  tabActive: { borderBottomWidth: 3, borderBottomColor: C.primary },
   tabText: { fontSize: 10, color: C.textSub, fontWeight: "600" },
   tabTextActive: { color: C.primary, fontWeight: "bold" },
-  tabBadge: { position: "absolute", top: -4, right: -8, backgroundColor: C.danger, borderRadius: 8, minWidth: 16, height: 16, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
-  tabBadgeText: { fontSize: 9, color: "#fff", fontWeight: "bold" },
+  tabBadge: { position: "absolute", top: -5, right: -6, backgroundColor: C.danger, borderRadius: 9, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
+  tabBadgeText: { fontSize: 10, color: "#fff", fontWeight: "bold" },
 
   body: { flex: 1, padding: 16 },
 
-  // セクション説明
-  sectionDesc: { flexDirection: "row", alignItems: "flex-start", gap: 8, backgroundColor: "#EFF6FF", borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: "#BFDBFE" },
-  sectionDescText: { flex: 1, fontSize: 12, color: "#1E40AF", lineHeight: 18 },
+  // セクション説明（控えめな左ストライプ）
+  sectionDesc: { flexDirection: "row", alignItems: "flex-start", gap: 8, backgroundColor: C.card, borderRadius: 10, padding: 12, marginBottom: 14, borderLeftWidth: 3, borderLeftColor: "#93C5FD" },
+  sectionDescText: { flex: 1, fontSize: 12, color: C.textSub, lineHeight: 18 },
 
   // セクションラベル
   sectionLabelRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
@@ -1332,42 +1689,43 @@ const styles = StyleSheet.create({
   dashSectionHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 },
   dashSectionTitle: { fontSize: 15, fontWeight: "bold", color: C.text },
   dashAlertDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.danger },
-  dashAlertCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 8, borderLeftWidth: 4, borderLeftColor: "#D97706", elevation: 2 },
-  dashAlertIconWrap: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#FEF3C7", alignItems: "center", justifyContent: "center" },
-  dashAlertTitle: { fontSize: 14, fontWeight: "bold", color: C.text },
-  dashAlertSub: { fontSize: 11, color: C.textSub, marginTop: 2 },
+  dashAlertCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: "#FFFBEB", borderRadius: 12, padding: 16, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: "#D97706", elevation: 3, shadowColor: "#D97706", shadowOpacity: 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+  dashAlertIconWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: "#FEF3C7", alignItems: "center", justifyContent: "center" },
+  dashAlertTitle: { fontSize: 15, fontWeight: "bold", color: "#92400E" },
+  dashAlertSub: { fontSize: 12, color: "#B45309", marginTop: 2 },
   dashGrid: { flexDirection: "row", gap: 10, marginBottom: 10 },
-  dashTile: { flex: 1, backgroundColor: C.card, borderRadius: 12, padding: 14, alignItems: "center", elevation: 2, gap: 8 },
-  dashTileIcon: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
-  dashTileLabel: { fontSize: 11, fontWeight: "600", color: C.text, textAlign: "center", lineHeight: 16 },
-  dashSummaryCard: { backgroundColor: C.card, borderRadius: 12, padding: 14, elevation: 2 },
-  dashSummaryRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
-  dashSummaryDot: { width: 10, height: 10, borderRadius: 5 },
+  dashTile: { flex: 1, backgroundColor: C.card, borderRadius: 12, padding: 14, alignItems: "center", elevation: 2, gap: 8, borderWidth: 1, borderColor: C.border },
+  dashTileIcon: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
+  dashTileLabel: { fontSize: 11, fontWeight: "700", color: C.text, textAlign: "center", lineHeight: 16 },
+  dashSummaryCard: { backgroundColor: C.card, borderRadius: 12, padding: 16, elevation: 2 },
+  dashSummaryRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10 },
+  dashSummaryDot: { width: 4, height: 32, borderRadius: 2 },
   dashSummaryLabel: { flex: 1, fontSize: 13, color: C.text },
-  dashSummaryValue: { fontSize: 14, fontWeight: "bold", color: C.text },
+  dashSummaryValue: { fontSize: 20, fontWeight: "bold", color: C.text, minWidth: 40, textAlign: "right" },
   dashSummaryDivider: { height: 1, backgroundColor: C.border },
 
   // 商品カード
   sponsorCardHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   sponsorIcon: { fontSize: 28 },
+  sponsorThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: C.bg },
   typeLabel: { alignSelf: "flex-start", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8 },
   typeLabelText: { fontSize: 12, fontWeight: "bold" },
   infoRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   infoRowText: { fontSize: 12, color: C.textSub },
-  statsBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", backgroundColor: C.bg, borderRadius: 8, padding: 10, gap: 4, marginBottom: 8 },
+  statsBar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", paddingVertical: 8, paddingHorizontal: 2, gap: 4, marginBottom: 6 },
   statItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  statText: { fontSize: 12, color: C.textSub },
+  statText: { fontSize: 13, color: C.textSub },
   statDivider: { width: 1, height: 14, backgroundColor: C.border, marginHorizontal: 4 },
 
-  // 即時抽選景品サマリー
-  prizeSummaryBox: { backgroundColor: C.bg, borderRadius: 8, padding: 10, marginBottom: 8, gap: 6 },
-  prizeSummaryTitle: { fontSize: 12, fontWeight: "bold", color: C.textSub, marginBottom: 2 },
-  prizeSummaryRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  prizeSummaryName: { flex: 1, fontSize: 12, color: C.text, fontWeight: "600" },
+  // 即時抽選景品サマリー（薄紫テーマ）
+  prizeSummaryBox: { backgroundColor: "#F9F5FF", borderRadius: 10, padding: 12, marginBottom: 10, gap: 0, borderWidth: 1, borderColor: "#E9D5FF" },
+  prizeSummaryTitle: { fontSize: 12, fontWeight: "bold", color: "#7C3AED", marginBottom: 8 },
+  prizeSummaryRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#F3E8FF" },
+  prizeSummaryName: { flex: 1, fontSize: 13, color: C.text, fontWeight: "600" },
   prizeMiniTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
   prizeMiniTagText: { fontSize: 10, fontWeight: "bold" },
-  prizeSummaryDetail: { fontSize: 10, color: C.textSub },
-  prizeSummaryStock: { fontSize: 10, color: C.success, fontWeight: "bold", minWidth: 24, textAlign: "right" },
+  prizeSummaryDetail: { fontSize: 11, color: C.textSub },
+  prizeSummaryStock: { fontSize: 12, color: C.success, fontWeight: "bold", minWidth: 32, textAlign: "right" },
   noPrizeWarning: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#FEF3C7", borderRadius: 8, padding: 10, marginBottom: 8 },
   noPrizeWarningText: { flex: 1, fontSize: 12, color: "#92400E" },
 
@@ -1375,16 +1733,17 @@ const styles = StyleSheet.create({
   winnerText: { fontSize: 13, color: C.warning, fontWeight: "bold", flex: 1 },
   winnerDate: { fontSize: 11, color: C.textSub },
 
-  // アクションバー
-  actionBar: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  actionBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: C.border, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: C.card },
-  actionBtnDanger: { borderColor: "#FCA5A5" },
-  actionBtnSuccess: { borderColor: "#86EFAC" },
-  actionBtnText: { fontSize: 13, fontWeight: "600" },
-  actionBtnFilled: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  actionBtnFilledText: { color: "#fff", fontSize: 13, fontWeight: "bold" },
+  // アクションバー（2段構成）
+  actionBar: { gap: 8, marginTop: 12 },
+  actionBarRow: { flexDirection: "row", gap: 8 },
+  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1.5, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 10, backgroundColor: C.card, minHeight: 44 },
+  actionBtnDanger: { borderColor: "#FCA5A5", backgroundColor: "#FFF5F5" },
+  actionBtnSuccess: { borderColor: "#86EFAC", backgroundColor: "#F0FDF4" },
+  actionBtnText: { fontSize: 13, fontWeight: "700" },
+  actionBtnFilled: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 16, paddingVertical: 13, borderRadius: 10, minHeight: 44 },
+  actionBtnFilledText: { color: "#fff", fontSize: 14, fontWeight: "bold" },
 
-  addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: C.primary, borderRadius: 10, paddingVertical: 14, marginBottom: 16 },
+  addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: C.primary, borderRadius: 12, paddingVertical: 15, marginBottom: 16, minHeight: 52 },
   addBtnText: { color: "#fff", fontSize: 15, fontWeight: "bold" },
 
   // その他
@@ -1439,11 +1798,38 @@ const styles = StyleSheet.create({
   adminNoteLabel: { fontSize: 11, fontWeight: "bold", color: "#92400E", marginBottom: 2 },
   adminNoteText: { fontSize: 13, color: C.text },
 
+  // 配送タイプバッジ
+  deliveryTypeBadge: { alignSelf: "flex-start", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  deliveryTypeBadgeText: { fontSize: 12, fontWeight: "bold" },
+
+  // ステータス進捗バー
+  progressStrip: { flexDirection: "row", alignItems: "center", marginBottom: 10, marginTop: 2 },
+  progressStep: { flex: 1, paddingVertical: 6, paddingHorizontal: 4, alignItems: "center", borderRadius: 6, backgroundColor: C.bg },
+  progressStepDone: { backgroundColor: "#DCFCE7" },
+  progressStepCurrent: { backgroundColor: "#D97706" },
+  progressStepText: { fontSize: 10, color: C.textSub, fontWeight: "600" },
+  progressStepTextDone: { color: "#16A34A", fontWeight: "bold" },
+  progressLine: { height: 2, width: 12, backgroundColor: C.border },
+  progressLineDone: { backgroundColor: "#16A34A" },
+
   // 景品管理モーダル
   prizeTargetInfo: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 14, elevation: 2 },
   prizeCardRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   deletePrizeBtn: { padding: 8 },
   miniTag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
   miniTagText: { fontSize: 11, fontWeight: "bold" },
+  deliveryTypeBtn: { flex: 1, borderWidth: 1, borderColor: C.border, borderRadius: 8, paddingVertical: 8, alignItems: "center", backgroundColor: C.bg },
+  deliveryTypeBtnActive: { borderColor: "#7C3AED", backgroundColor: "#F3E8FF" },
+  deliveryTypeBtnText: { fontSize: 12, color: C.textSub, fontWeight: "600" },
+  deliveryTypeBtnTextActive: { color: "#7C3AED" },
   switchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12, gap: 12 },
+
+  // 画像ピッカー
+  imagePickerBtn: { alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 2, borderColor: C.border, borderStyle: "dashed", borderRadius: 10, paddingVertical: 20, backgroundColor: C.bg },
+  imagePickerBtnText: { fontSize: 12, color: C.textSub },
+  imagePreviewContainer: { flexDirection: "row", alignItems: "center", gap: 12 },
+  imagePreview: { width: 160, height: 120, borderRadius: 10, backgroundColor: C.bg },
+  imagePreviewActions: { gap: 8 },
+  imagePreviewBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
+  imagePreviewBtnText: { fontSize: 12, fontWeight: "600", color: C.primary },
 });

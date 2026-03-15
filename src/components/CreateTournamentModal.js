@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   Modal, ScrollView, ActivityIndicator, Alert
@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
 import { useOrganizer } from "../hooks/useOrganizer";
 import { useMasterData } from "../hooks/useMasterData";
+import { useTemplates } from "../hooks/useTemplates";
 import { REGIONS } from "../constants/prefectures";
 
 export default function CreateTournamentModal({ visible, onClose }) {
@@ -23,15 +24,96 @@ export default function CreateTournamentModal({ visible, onClose }) {
   const [entryFeeAmount, setEntryFeeAmount] = useState("");
   const [locationType, setLocationType] = useState("offline");
   const [prefecture, setPrefecture] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
+  const [entryDeadline, setEntryDeadline] = useState("");
+  const [resultsPublic, setResultsPublic] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const { createTournament } = useOrganizer();
   const { games: masterGames, tags: masterTags, loading: masterLoading } = useMasterData();
+  const { templates, fetchTemplates, saveTemplate, deleteTemplate } = useTemplates();
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (visible) fetchTemplates();
+  }, [visible]);
 
   const toggleTag = (label) => {
     setSelectedTags((prev) =>
       prev.includes(label) ? prev.filter((t) => t !== label) : [...prev, label]
     );
+  };
+
+  // テンプレートから読み込み
+  const applyTemplate = (tmpl) => {
+    if (tmpl.game) {
+      const matched = masterGames.find((g) => g.name === tmpl.game);
+      if (matched) setGame(matched);
+    }
+    if (tmpl.organizer) setOrganizer(tmpl.organizer);
+    if (tmpl.location) setLocation(tmpl.location);
+    if (tmpl.max_players) setMaxPlayers(String(tmpl.max_players));
+    if (tmpl.description) setDescription(tmpl.description);
+    if (tmpl.tags) setSelectedTags(tmpl.tags);
+    if (tmpl.entry_fee_type) setEntryFeeType(tmpl.entry_fee_type);
+    if (tmpl.entry_fee_amount) setEntryFeeAmount(String(tmpl.entry_fee_amount));
+    if (tmpl.location_type) setLocationType(tmpl.location_type);
+    if (tmpl.prefecture) setPrefecture(tmpl.prefecture);
+    if (tmpl.external_url) setExternalUrl(tmpl.external_url);
+    setShowTemplateMenu(false);
+    Alert.alert("テンプレート適用", `「${tmpl.template_name}」を読み込みました`);
+  };
+
+  // 現在の設定をテンプレートとして保存
+  const handleSaveAsTemplate = () => {
+    Alert.prompt
+      ? Alert.prompt("テンプレート保存", "テンプレート名を入力", async (templateName) => {
+          if (!templateName?.trim()) return;
+          await doSaveTemplate(templateName.trim());
+        })
+      : Alert.alert("テンプレート保存", "現在の設定をテンプレートとして保存しますか？", [
+          { text: "キャンセル", style: "cancel" },
+          {
+            text: "保存",
+            onPress: async () => {
+              const templateName = `テンプレート ${new Date().toLocaleDateString("ja-JP")}`;
+              await doSaveTemplate(templateName);
+            },
+          },
+        ]);
+  };
+
+  const doSaveTemplate = async (templateName) => {
+    const { error } = await saveTemplate({
+      template_name: templateName,
+      game: game?.name || null,
+      game_color: game?.color || null,
+      organizer: organizer || null,
+      location: location || null,
+      max_players: maxPlayers ? parseInt(maxPlayers) : null,
+      description: description || null,
+      tags: selectedTags.length > 0 ? selectedTags : null,
+      entry_fee_type: entryFeeType,
+      entry_fee_amount: entryFeeType === "paid" && entryFeeAmount ? parseInt(entryFeeAmount) : null,
+      location_type: locationType,
+      prefecture: locationType === "offline" ? prefecture : null,
+    });
+    if (!error) {
+      Alert.alert("完了", "テンプレートを保存しました");
+    } else {
+      Alert.alert("エラー", "保存に失敗しました");
+    }
+  };
+
+  const handleDeleteTemplate = (tmpl) => {
+    Alert.alert("テンプレート削除", `「${tmpl.template_name}」を削除しますか？`, [
+      { text: "キャンセル", style: "cancel" },
+      {
+        text: "削除",
+        style: "destructive",
+        onPress: () => deleteTemplate(tmpl.id),
+      },
+    ]);
   };
 
   const handleSave = async () => {
@@ -54,6 +136,9 @@ export default function CreateTournamentModal({ visible, onClose }) {
       entry_fee_amount: entryFeeType === "paid" && entryFeeAmount ? parseInt(entryFeeAmount) : null,
       location_type: locationType,
       prefecture: locationType === "offline" ? prefecture : null,
+      external_url: externalUrl || null,
+      entry_deadline: entryDeadline ? new Date(entryDeadline).toISOString() : null,
+      results_public: resultsPublic,
     });
     setLoading(false);
     if (error) {
@@ -64,6 +149,7 @@ export default function CreateTournamentModal({ visible, onClose }) {
       setOrganizer(""); setMaxPlayers(""); setDescription("");
       setSelectedTags([]); setEntryFeeType("free"); setEntryFeeAmount("");
       setLocationType("offline"); setPrefecture(""); setGame(null);
+      setExternalUrl(""); setEntryDeadline(""); setResultsPublic(true);
       onClose();
     }
   };
@@ -88,6 +174,40 @@ export default function CreateTournamentModal({ visible, onClose }) {
             <ActivityIndicator color={C.primary} style={{ marginTop: 40 }} />
           ) : (
             <>
+              {/* テンプレート読込ボタン */}
+              <TouchableOpacity
+                style={styles.templateBtn}
+                onPress={() => setShowTemplateMenu(!showTemplateMenu)}
+              >
+                <Ionicons name="clipboard-outline" size={18} color={C.primary} />
+                <Text style={styles.templateBtnText}>テンプレートから作成</Text>
+                <Ionicons name={showTemplateMenu ? "chevron-up" : "chevron-down"} size={16} color={C.primary} />
+              </TouchableOpacity>
+
+              {/* テンプレートドロップダウン */}
+              {showTemplateMenu && (
+                <View style={styles.templateMenu}>
+                  {templates.length === 0 ? (
+                    <Text style={styles.templateEmpty}>テンプレートなし</Text>
+                  ) : (
+                    templates.map((tmpl) => (
+                      <View key={tmpl.id} style={styles.templateItem}>
+                        <TouchableOpacity style={{ flex: 1 }} onPress={() => applyTemplate(tmpl)}>
+                          <Text style={styles.templateName}>{tmpl.template_name}</Text>
+                          <Text style={styles.templateSub}>
+                            {[tmpl.game, tmpl.organizer, tmpl.location_type === "online" ? "オンライン" : tmpl.prefecture]
+                              .filter(Boolean).join(" · ")}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDeleteTemplate(tmpl)} style={{ padding: 6 }}>
+                          <Ionicons name="trash-outline" size={16} color={C.danger} />
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </View>
+              )}
+
               {/* ゲーム選択 */}
               <Text style={styles.label}>
                 <Ionicons name="game-controller-outline" size={13} color={C.textSub} /> ゲーム *
@@ -197,6 +317,33 @@ export default function CreateTournamentModal({ visible, onClose }) {
               <Text style={styles.label}>開催場所（詳細）</Text>
               <TextInput style={styles.input} placeholder="例：東京都渋谷区○○ビル3F" placeholderTextColor={C.textSub} value={location} onChangeText={setLocation} />
 
+              {/* 外部大会URL */}
+              <Text style={styles.label}>
+                <Ionicons name="link-outline" size={13} color={C.textSub} /> 外部大会URL（任意）
+              </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="例：https://tonamel.com/competition/xxxxx"
+                placeholderTextColor={C.textSub}
+                value={externalUrl}
+                onChangeText={setExternalUrl}
+                keyboardType="url"
+                autoCapitalize="none"
+              />
+              {externalUrl ? (
+                <Text style={styles.hintText}>外部サイトのURLを設定すると、参加ボタンが外部サイトへのリンクになります</Text>
+              ) : null}
+
+              {/* エントリー締切 */}
+              <Text style={styles.label}>エントリー締切（任意）</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="例：2026-03-01T12:00"
+                placeholderTextColor={C.textSub}
+                value={entryDeadline}
+                onChangeText={setEntryDeadline}
+              />
+
               {/* 定員 */}
               <Text style={styles.label}>定員</Text>
               <TextInput style={styles.input} placeholder="例：32" placeholderTextColor={C.textSub} value={maxPlayers} onChangeText={setMaxPlayers} keyboardType="number-pad" />
@@ -220,6 +367,33 @@ export default function CreateTournamentModal({ visible, onClose }) {
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* 結果公開設定 */}
+              <Text style={styles.label}>
+                <Ionicons name="podium-outline" size={13} color={C.textSub} /> 大会結果の公開
+              </Text>
+              <View style={styles.toggleRow}>
+                <TouchableOpacity
+                  style={[styles.toggleBtn, resultsPublic && styles.toggleBtnActive]}
+                  onPress={() => setResultsPublic(true)}
+                >
+                  <Ionicons name="eye-outline" size={16} color={resultsPublic ? "#fff" : C.primary} />
+                  <Text style={[styles.toggleBtnText, resultsPublic && { color: "#fff" }]}>公開する</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.toggleBtn, !resultsPublic && styles.toggleBtnActive]}
+                  onPress={() => setResultsPublic(false)}
+                >
+                  <Ionicons name="eye-off-outline" size={16} color={!resultsPublic ? "#fff" : C.textSub} />
+                  <Text style={[styles.toggleBtnText, !resultsPublic && { color: "#fff" }]}>非公開</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* テンプレ保存ボタン */}
+              <TouchableOpacity style={styles.saveTemplateBtn} onPress={handleSaveAsTemplate}>
+                <Ionicons name="save-outline" size={16} color={C.primary} />
+                <Text style={styles.saveTemplateBtnText}>現在の設定をテンプレートとして保存</Text>
+              </TouchableOpacity>
 
               <View style={{ height: 40 }} />
             </>
@@ -256,4 +430,28 @@ const styles = StyleSheet.create({
   tagBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
   tagBtnActive: { backgroundColor: "#6B7280", borderColor: "#6B7280" },
   tagBtnText: { fontSize: 13, color: C.text },
+  // テンプレート
+  templateBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.primary + "10",
+    borderRadius: 10, padding: 14, borderWidth: 1, borderColor: C.primary + "30",
+  },
+  templateBtnText: { flex: 1, fontSize: 14, fontWeight: "600", color: C.primary },
+  templateMenu: {
+    backgroundColor: C.card, borderRadius: 10, marginTop: 8, borderWidth: 1, borderColor: C.border,
+    overflow: "hidden",
+  },
+  templateEmpty: { fontSize: 13, color: C.textSub, textAlign: "center", paddingVertical: 16 },
+  templateItem: {
+    flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border,
+  },
+  templateName: { fontSize: 14, fontWeight: "bold", color: C.text },
+  templateSub: { fontSize: 11, color: C.textSub, marginTop: 2 },
+  saveTemplateBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 14, marginTop: 20, borderRadius: 10, borderWidth: 1, borderColor: C.primary,
+    borderStyle: "dashed",
+  },
+  saveTemplateBtnText: { fontSize: 13, color: C.primary, fontWeight: "600" },
+  hintText: { fontSize: 11, color: C.primary, marginTop: 4, marginLeft: 2 },
 });

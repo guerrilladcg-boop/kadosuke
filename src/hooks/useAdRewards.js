@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../store/useAuthStore";
 import { DAILY_AD_LIMIT, POINTS_PER_AD } from "../constants/adConfig";
+import { addExperience } from "../store/useLevelStore";
+import { EXP_REWARDS } from "../constants/levels";
 
 export const useAdRewards = () => {
   const [dailyViewCount, setDailyViewCount] = useState(0);
@@ -45,6 +47,8 @@ export const useAdRewards = () => {
 
     if (!pointsError) {
       setDailyViewCount((prev) => prev + 1);
+      // 経験値加算
+      await addExperience(user.id, EXP_REWARDS.AD_VIEW);
     }
     return { error: pointsError, pointsEarned: POINTS_PER_AD };
   };

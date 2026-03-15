@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, TextInput, Modal, Linking, ActivityIndicator
+  StyleSheet, Alert, TextInput, Modal, Linking, ActivityIndicator, Image, RefreshControl
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { C } from "../constants/theme";
@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase";
 import { useAdRewards } from "../hooks/useAdRewards";
 import { useSponsorItems } from "../hooks/useSponsorItems";
 import { useProfile } from "../hooks/useProfile";
+import { showError } from "../utils/errorHelper";
 import RewardedAdButton from "../components/RewardedAdButton";
 import ShippingAddressModal from "../components/ShippingAddressModal";
 import RouletteModal from "../components/RouletteModal";
@@ -31,12 +32,20 @@ export default function SponsorScreen() {
   const [showAddressModal, setShowAddressModal] = useState(false);
   const [pendingExchangeItem, setPendingExchangeItem] = useState(null);
   const [addressLoading, setAddressLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // 即時抽選用
   const [showRoulette, setShowRoulette] = useState(false);
   const [rouletteItem, setRouletteItem] = useState(null);
   const [rouletteResult, setRouletteResult] = useState(null);
   const [challengeLoading, setChallengeLoading] = useState(false);
+
+  // 確率情報モーダル
+  const [probModalItem, setProbModalItem] = useState(null);
+
+  // 配送先住所（即時抽選当選時）
+  const [showWinAddressModal, setShowWinAddressModal] = useState(false);
+  const [pendingWinResult, setPendingWinResult] = useState(null);
 
   React.useEffect(() => { fetchPoints(); }, [user]);
 
@@ -50,6 +59,12 @@ export default function SponsorScreen() {
     if (data) setPoints(data.points || 0);
   };
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([fetchPoints(), refetch()]);
+    setRefreshing(false);
+  }, [user, refetch]);
+
   const handleWatchAd = async () => {
     const result = await showRewardedAd();
     if (!result.error) {
@@ -58,7 +73,7 @@ export default function SponsorScreen() {
     } else if (typeof result.error === "string") {
       Alert.alert("お知らせ", result.error);
     } else {
-      Alert.alert("エラー", "ポイントの付与に失敗しました");
+      showError(result.error, "ポイントの付与に失敗しました");
     }
   };
 
@@ -73,11 +88,9 @@ export default function SponsorScreen() {
     }
 
     if (item.delivery_type === "physical") {
-      // 配送アイテム → 住所入力モーダルを表示
       setPendingExchangeItem(item);
       setShowAddressModal(true);
     } else {
-      // デジタルアイテム → 確認のみ
       Alert.alert("交換確認", `${item.name}と交換しますか？\n${item.point_cost}ptを消費します`, [
         { text: "キャンセル", style: "cancel" },
         {
@@ -87,7 +100,7 @@ export default function SponsorScreen() {
               setPoints(points - item.point_cost);
               Alert.alert("交換申請完了!", `${item.name}の交換を受け付けました。\n運営から個別にご連絡します。`);
             } else {
-              Alert.alert("エラー", typeof error === "string" ? error : "交換に失敗しました");
+              showError(error, "交換に失敗しました");
             }
           }
         },
@@ -95,15 +108,10 @@ export default function SponsorScreen() {
     }
   };
 
-  // 住所入力完了 → プロフィール保存 + 交換実行
   const handleAddressSubmit = async (addressData) => {
     if (!pendingExchangeItem) return;
     setAddressLoading(true);
-
-    // 住所をプロフィールに保存（次回以降自動入力用）
     await updateShippingAddress(addressData);
-
-    // 交換実行（住所スナップショット付き）
     const { error } = await exchangeItem(pendingExchangeItem, points, addressData);
     setAddressLoading(false);
 
@@ -113,7 +121,7 @@ export default function SponsorScreen() {
       setPendingExchangeItem(null);
       Alert.alert("交換申請完了!", `${pendingExchangeItem.name}の交換を受け付けました。\n配送先に発送いたします。`);
     } else {
-      Alert.alert("エラー", typeof error === "string" ? error : "交換に失敗しました");
+      showError(error, "交換に失敗しました");
     }
   };
 
@@ -142,7 +150,7 @@ export default function SponsorScreen() {
               setTicketCounts((prev) => ({ ...prev, [item.id]: 1 }));
               Alert.alert("投票完了!", `${count}口を投票しました`);
             } else {
-              Alert.alert("エラー", typeof error === "string" ? error : "投票に失敗しました");
+              showError(error, "投票に失敗しました");
             }
           }
         },
@@ -150,7 +158,6 @@ export default function SponsorScreen() {
     );
   };
 
-  // 即時抽選チャレンジ
   const handleInstantLottery = (item) => {
     if (points < item.point_cost) {
       Alert.alert("ポイント不足", `${item.point_cost}pt必要です（現在${points}pt）`);
@@ -158,7 +165,7 @@ export default function SponsorScreen() {
     }
 
     const prizes = instantPrizes[item.id] || [];
-    const availablePrizes = prizes.filter((p) => p.stock > 0);
+    const availablePrizes = prizes.filter((p) => p.stock === null || p.stock > 0);
     if (availablePrizes.length === 0) {
       Alert.alert("終了", "この抽選の景品は全て終了しています");
       return;
@@ -176,7 +183,7 @@ export default function SponsorScreen() {
             const result = await playInstantLottery(item, points);
             setChallengeLoading(false);
             if (result.error) {
-              Alert.alert("エラー", typeof result.error === "string" ? result.error : "抽選に失敗しました");
+              showError(result.error, "抽選に失敗しました");
             } else {
               setPoints(points - item.point_cost + (result.pointsRefunded || 0));
               setRouletteItem(item);
@@ -195,8 +202,31 @@ export default function SponsorScreen() {
     return ((myTotal / item.total_points_invested) * 100).toFixed(1);
   };
 
+  // 残り時間テキスト生成
+  const getRemainingTimeText = (endDate) => {
+    if (!endDate) return null;
+    const now = new Date();
+    const end = new Date(endDate);
+    const diffMs = end - now;
+    if (diffMs <= 0) return null;
+
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 0) return `あと${diffDays}日`;
+    if (diffHours > 0) return `あと${diffHours}時間`;
+    return `あと${diffMinutes}分`;
+  };
+
+  const hasAnyItems = exchangeItems.length > 0 || instantLotteryItems.length > 0 || applicationLotteryItems.length > 0;
+
   return (
-    <ScrollView style={styles.screen} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.screen}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+    >
       {/* ポイントカード */}
       <View style={styles.pointCard}>
         <Text style={styles.pointLabel}>現在の保有ポイント</Text>
@@ -228,6 +258,12 @@ export default function SponsorScreen() {
 
       {itemsLoading ? (
         <ActivityIndicator color={C.primary} style={{ marginTop: 30 }} />
+      ) : !hasAnyItems ? (
+        <View style={styles.empty}>
+          <Ionicons name="gift-outline" size={48} color={C.border} />
+          <Text style={styles.emptyText}>協賛商品はまだありません</Text>
+          <Text style={styles.emptySubText}>動画視聴でポイントを貯めて{"\n"}商品が追加されるのをお待ちください</Text>
+        </View>
       ) : (
         <>
           {/* ========== ポイント交換所 ========== */}
@@ -240,7 +276,11 @@ export default function SponsorScreen() {
               <View style={styles.exchangeGrid}>
                 {exchangeItems.map((item) => (
                   <View key={item.id} style={styles.exchangeCard}>
-                    <Text style={styles.exchangeIcon}>{item.icon}</Text>
+                    {item.image_url ? (
+                      <Image source={{ uri: item.image_url }} style={styles.exchangeThumb} />
+                    ) : (
+                      <Text style={styles.exchangeIcon}>{item.icon}</Text>
+                    )}
                     <Text style={styles.exchangeName}>{item.name}</Text>
                     {item.sponsor_name && (
                       <Text style={styles.exchangeSponsor}>提供: {item.sponsor_name}</Text>
@@ -286,19 +326,30 @@ export default function SponsorScreen() {
 
               {instantLotteryItems.map((item) => {
                 const prizes = instantPrizes[item.id] || [];
-                const hasAvailablePrizes = prizes.some((p) => p.stock > 0 && p.is_winning);
-                const allPrizesGone = prizes.filter((p) => p.is_winning).every((p) => p.stock <= 0);
+                const hasAvailablePrizes = prizes.some((p) => (p.stock === null || p.stock > 0) && p.is_winning);
+                const allPrizesGone = prizes.filter((p) => p.is_winning).every((p) => p.stock !== null && p.stock <= 0);
 
                 return (
                   <View key={item.id} style={styles.instantCard}>
                     <View style={styles.lotteryHeader}>
-                      <Text style={styles.lotteryIcon}>{item.icon}</Text>
+                      {item.image_url ? (
+                        <Image source={{ uri: item.image_url }} style={styles.lotteryThumb} />
+                      ) : (
+                        <Text style={styles.lotteryIcon}>{item.icon}</Text>
+                      )}
                       <View style={{ flex: 1 }}>
                         <Text style={styles.lotteryName}>{item.name}</Text>
                         {item.sponsor_name && (
                           <Text style={styles.lotterySponsor}>提供: {item.sponsor_name}</Text>
                         )}
                       </View>
+                      <TouchableOpacity
+                        style={styles.infoBtn}
+                        onPress={() => setProbModalItem(item)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="information-circle-outline" size={22} color={C.primary} />
+                      </TouchableOpacity>
                       {allPrizesGone ? (
                         <View style={styles.closedBadge}><Text style={styles.closedBadgeText}>終了</Text></View>
                       ) : (
@@ -306,33 +357,16 @@ export default function SponsorScreen() {
                       )}
                     </View>
 
-                    {item.description && (
-                      <Text style={styles.lotteryDesc}>{item.description}</Text>
+                    {/* 残り時間表示 */}
+                    {item.lottery_end_at && getRemainingTimeText(item.lottery_end_at) && (
+                      <View style={styles.countdownBadge}>
+                        <Ionicons name="time-outline" size={13} color="#D97706" />
+                        <Text style={styles.countdownText}>{getRemainingTimeText(item.lottery_end_at)}</Text>
+                      </View>
                     )}
 
-                    {/* 景品一覧 */}
-                    {prizes.length > 0 && (
-                      <View style={styles.prizeList}>
-                        <Text style={styles.prizeListTitle}>景品一覧</Text>
-                        {prizes.filter((p) => p.is_winning).map((prize) => (
-                          <View key={prize.id} style={styles.prizeRow}>
-                            <Text style={styles.prizeIcon}>{prize.icon}</Text>
-                            <Text style={styles.prizeName}>{prize.name}</Text>
-                            <Text style={[styles.prizeStock, prize.stock <= 0 && { color: C.danger }]}>
-                              {prize.stock > 0 ? `残${prize.stock}` : "終了"}
-                            </Text>
-                          </View>
-                        ))}
-                        {prizes.filter((p) => !p.is_winning).map((prize) => (
-                          <View key={prize.id} style={styles.prizeRow}>
-                            <Text style={styles.prizeIcon}>{prize.icon}</Text>
-                            <Text style={[styles.prizeName, { color: C.textSub }]}>{prize.name}</Text>
-                            {prize.point_refund > 0 && (
-                              <Text style={styles.prizeRefund}>{prize.point_refund}pt還元</Text>
-                            )}
-                          </View>
-                        ))}
-                      </View>
+                    {item.description && (
+                      <Text style={styles.lotteryDesc}>{item.description}</Text>
                     )}
 
                     <View style={styles.instantCostRow}>
@@ -385,7 +419,11 @@ export default function SponsorScreen() {
                 return (
                   <View key={item.id} style={styles.lotteryCard}>
                     <View style={styles.lotteryHeader}>
-                      <Text style={styles.lotteryIcon}>{item.icon}</Text>
+                      {item.image_url ? (
+                        <Image source={{ uri: item.image_url }} style={styles.lotteryThumb} />
+                      ) : (
+                        <Text style={styles.lotteryIcon}>{item.icon}</Text>
+                      )}
                       <View style={{ flex: 1 }}>
                         <Text style={styles.lotteryName}>{item.name}</Text>
                         {item.sponsor_name && (
@@ -400,6 +438,14 @@ export default function SponsorScreen() {
                         <View style={styles.openBadge}><Text style={styles.openBadgeText}>受付中</Text></View>
                       )}
                     </View>
+
+                    {/* 残り時間表示 */}
+                    {item.lottery_end_at && getRemainingTimeText(item.lottery_end_at) && !isDrawn && !isClosed && (
+                      <View style={styles.countdownBadge}>
+                        <Ionicons name="time-outline" size={13} color="#D97706" />
+                        <Text style={styles.countdownText}>{getRemainingTimeText(item.lottery_end_at)}</Text>
+                      </View>
+                    )}
 
                     {item.description && (
                       <Text style={styles.lotteryDesc}>{item.description}</Text>
@@ -491,12 +537,107 @@ export default function SponsorScreen() {
         pointCost={rouletteItem?.point_cost || 0}
         onClose={() => {
           setShowRoulette(false);
+          const winResult = rouletteResult;
+          const winItem = rouletteItem;
           setRouletteItem(null);
           setRouletteResult(null);
           fetchPoints();
           refetch();
+
+          // 郵送景品の当選 → 配送先入力
+          if (winResult?.isWin && winResult?.prize?.delivery_type === "physical") {
+            setPendingWinResult({ ...winResult, item: winItem });
+            setShowWinAddressModal(true);
+          }
         }}
       />
+
+      {/* 即時抽選当選時の配送先住所モーダル */}
+      <ShippingAddressModal
+        visible={showWinAddressModal}
+        onClose={() => { setShowWinAddressModal(false); setPendingWinResult(null); }}
+        onSubmit={async (addressData) => {
+          setAddressLoading(true);
+          await updateShippingAddress(addressData);
+          // 配送情報をpoint_exchangesに記録
+          if (pendingWinResult) {
+            await supabase.from("point_exchanges")
+              .update({
+                delivery_type: "physical",
+                shipping_name: addressData.shipping_name,
+                shipping_zip: addressData.shipping_zip,
+                shipping_prefecture: addressData.shipping_prefecture,
+                shipping_city: addressData.shipping_city,
+                shipping_address: addressData.shipping_address,
+                shipping_building: addressData.shipping_building || null,
+                shipping_phone: addressData.shipping_phone,
+              })
+              .eq("user_id", user.id)
+              .eq("item_id", pendingWinResult.item?.id)
+              .eq("type", "instant_lottery_win")
+              .eq("status", "pending")
+              .order("created_at", { ascending: false })
+              .limit(1);
+          }
+          setAddressLoading(false);
+          setShowWinAddressModal(false);
+          setPendingWinResult(null);
+          Alert.alert("配送先を登録しました", "当選おめでとうございます！\n運営から配送手続きを行います。");
+        }}
+        initialAddress={getShippingAddress()}
+        loading={addressLoading}
+      />
+
+      {/* 確率情報モーダル */}
+      <Modal visible={!!probModalItem} animationType="fade" transparent>
+        <View style={styles.overlay}>
+          <View style={styles.infoSheet}>
+            <Text style={styles.infoTitle}>🎰 当選確率</Text>
+            {probModalItem && (() => {
+              const prizes = instantPrizes[probModalItem.id] || [];
+              const totalWeight = prizes.reduce((sum, p) => sum + p.probability_weight, 0);
+              return (
+                <>
+                  {prizes.filter(p => p.is_winning).length > 0 && (
+                    <View style={styles.probSection}>
+                      <Text style={styles.probSectionLabel}>当たり</Text>
+                      {prizes.filter(p => p.is_winning).map((p) => (
+                        <View key={p.id} style={styles.probRow}>
+                          <Text style={styles.probIcon}>{p.icon}</Text>
+                          <Text style={styles.probName}>{p.name}</Text>
+                          <Text style={styles.probPercent}>
+                            {totalWeight > 0 ? ((p.probability_weight / totalWeight) * 100).toFixed(1) : 0}%
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  {prizes.filter(p => !p.is_winning).length > 0 && (
+                    <View style={styles.probSection}>
+                      <Text style={[styles.probSectionLabel, { color: C.textSub }]}>はずれ</Text>
+                      {prizes.filter(p => !p.is_winning).map((p) => (
+                        <View key={p.id} style={styles.probRow}>
+                          <Text style={styles.probIcon}>{p.icon}</Text>
+                          <Text style={styles.probName}>{p.name}</Text>
+                          <Text style={[styles.probPercent, { color: C.textSub }]}>
+                            {totalWeight > 0 ? ((p.probability_weight / totalWeight) * 100).toFixed(1) : 0}%
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 11, color: C.textSub, textAlign: "center", marginTop: 8 }}>
+                    1回 = {probModalItem.point_cost}pt
+                  </Text>
+                </>
+              );
+            })()}
+            <TouchableOpacity onPress={() => setProbModalItem(null)} style={styles.closeInfoBtn}>
+              <Text style={styles.closeInfoText}>閉じる</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* スポンサー情報モーダル */}
       <Modal visible={showSponsorInfo} animationType="fade" transparent>
@@ -540,11 +681,15 @@ const styles = StyleSheet.create({
   sponsorCtaSub: { fontSize: 11, color: C.textSub, marginTop: 2 },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10, marginTop: 8 },
   sectionTitle: { fontSize: 16, fontWeight: "bold", color: C.text },
+  empty: { alignItems: "center", marginTop: 40, gap: 8 },
+  emptyText: { fontSize: 16, fontWeight: "bold", color: C.textSub },
+  emptySubText: { fontSize: 13, color: C.textSub, marginTop: 4, textAlign: "center", lineHeight: 20 },
 
   // 交換
   exchangeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 10 },
   exchangeCard: { width: "48%", backgroundColor: C.card, borderRadius: 12, padding: 16, alignItems: "center", elevation: 2 },
   exchangeIcon: { fontSize: 36, marginBottom: 8 },
+  exchangeThumb: { width: 72, height: 72, borderRadius: 10, marginBottom: 8, backgroundColor: "#F3F4F6" },
   exchangeName: { fontSize: 13, fontWeight: "bold", color: C.text, textAlign: "center", marginBottom: 2 },
   exchangeSponsor: { fontSize: 10, color: C.textSub, marginBottom: 4 },
   exchangePt: { fontSize: 15, color: C.primary, fontWeight: "bold", marginBottom: 4 },
@@ -561,13 +706,6 @@ const styles = StyleSheet.create({
   instantCard: { backgroundColor: C.card, borderRadius: 14, padding: 16, elevation: 2, marginBottom: 12, borderWidth: 1, borderColor: "#FFE0CC" },
   instantBadge: { backgroundColor: "#FFF0E6", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
   instantBadgeText: { fontSize: 11, color: C.primary, fontWeight: "bold" },
-  prizeList: { backgroundColor: C.bg, borderRadius: 10, padding: 12, marginVertical: 8, gap: 8 },
-  prizeListTitle: { fontSize: 12, fontWeight: "bold", color: C.textSub, marginBottom: 4 },
-  prizeRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  prizeIcon: { fontSize: 20, width: 28, textAlign: "center" },
-  prizeName: { flex: 1, fontSize: 13, color: C.text, fontWeight: "600" },
-  prizeStock: { fontSize: 11, color: C.success, fontWeight: "bold" },
-  prizeRefund: { fontSize: 11, color: "#3B82F6", fontWeight: "600" },
   instantCostRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4, marginBottom: 10 },
   instantCostText: { fontSize: 14, color: C.primary, fontWeight: "bold" },
   challengeBtn: {
@@ -576,6 +714,8 @@ const styles = StyleSheet.create({
   },
   challengeBtnDisabled: { opacity: 0.5 },
   challengeBtnText: { color: "#fff", fontSize: 17, fontWeight: "bold" },
+  countdownBadge: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#FEF3C7", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 8, alignSelf: "flex-start" },
+  countdownText: { fontSize: 12, color: "#D97706", fontWeight: "bold" },
 
   // 応募抽選
   lotteryHint: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EFF6FF", borderRadius: 8, padding: 10, marginBottom: 10 },
@@ -583,6 +723,7 @@ const styles = StyleSheet.create({
   lotteryCard: { backgroundColor: C.card, borderRadius: 14, padding: 16, elevation: 2, marginBottom: 12 },
   lotteryHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   lotteryIcon: { fontSize: 36 },
+  lotteryThumb: { width: 56, height: 56, borderRadius: 10, backgroundColor: "#F3F4F6" },
   lotteryName: { fontSize: 16, fontWeight: "bold", color: C.text },
   lotterySponsor: { fontSize: 11, color: C.textSub, marginTop: 2 },
   lotteryDesc: { fontSize: 13, color: C.textSub, lineHeight: 20, marginBottom: 10 },
@@ -617,4 +758,11 @@ const styles = StyleSheet.create({
   contactBtnText: { color: "#fff", fontSize: 15, fontWeight: "bold" },
   closeInfoBtn: { alignItems: "center", paddingVertical: 12, marginTop: 8 },
   closeInfoText: { fontSize: 14, color: C.textSub },
+  infoBtn: { marginRight: 6 },
+  probSection: { marginBottom: 12 },
+  probSectionLabel: { fontSize: 13, fontWeight: "bold", color: C.primary, marginBottom: 6 },
+  probRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.bg },
+  probIcon: { fontSize: 22 },
+  probName: { flex: 1, fontSize: 14, color: C.text, fontWeight: "600" },
+  probPercent: { fontSize: 15, fontWeight: "bold", color: C.primary },
 });

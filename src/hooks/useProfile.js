@@ -1,15 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../store/useAuthStore";
+import { addExperience } from "../store/useLevelStore";
+import { EXP_REWARDS } from "../constants/levels";
 
 export const useProfile = () => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const initialLoadDone = useRef(false);
   const { user } = useAuthStore();
 
   const fetchProfile = useCallback(async () => {
     if (!user) return;
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     let { data } = await supabase
       .from("profiles")
       .select("*")
@@ -38,6 +41,7 @@ export const useProfile = () => {
     }
     if (data) setProfile(data);
     setLoading(false);
+    initialLoadDone.current = true;
   }, [user]);
 
   const updateName = async (name) => {
@@ -46,7 +50,10 @@ export const useProfile = () => {
       .from("profiles")
       .update({ name: name.trim() })
       .eq("id", user.id);
-    if (!error) await fetchProfile();
+    if (!error) {
+      await addExperience(user.id, EXP_REWARDS.UPDATE_NAME);
+      await fetchProfile();
+    }
     return { error };
   };
 
@@ -87,7 +94,10 @@ export const useProfile = () => {
         .update({ avatar_url: avatarUrl })
         .eq("id", user.id);
 
-      if (!updateError) await fetchProfile();
+      if (!updateError) {
+        await addExperience(user.id, EXP_REWARDS.UPLOAD_AVATAR);
+        await fetchProfile();
+      }
       return { error: updateError };
     } catch (e) {
       return { error: e };
@@ -177,7 +187,10 @@ export const useProfile = () => {
         shipping_phone: address.shipping_phone,
       })
       .eq("id", user.id);
-    if (!error) await fetchProfile();
+    if (!error) {
+      await addExperience(user.id, EXP_REWARDS.UPDATE_SHIPPING);
+      await fetchProfile();
+    }
     return { error };
   };
 
@@ -193,6 +206,69 @@ export const useProfile = () => {
       shipping_building: profile.shipping_building,
       shipping_phone: profile.shipping_phone,
     };
+  };
+
+  // 他ユーザーの公開プロフィールを取得
+  const fetchPublicProfile = async (userId) => {
+    if (!userId) return null;
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, name, avatar_url, is_public, level, experience, is_premium, organizer_status, bio, main_deck, achievement_badges, avg_rating, review_count")
+      .eq("id", userId)
+      .single();
+    return data;
+  };
+
+  // 他ユーザーの公開統計情報を取得（戦績含む）
+  const fetchPublicProfileStats = async (userId) => {
+    if (!userId) return { tournamentCount: 0, mainGame: null, results: [], medals: { gold: 0, silver: 0, bronze: 0 }, winRate: 0, gameStats: [] };
+    // 大会参加数
+    const { count } = await supabase
+      .from("entries")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId);
+    // 戦績データ
+    const { data: results } = await supabase
+      .from("results")
+      .select("game, game_color, rank, wins, losses, draws, deck_name, tournament_name, date")
+      .eq("user_id", userId)
+      .order("date", { ascending: false });
+    const allResults = results || [];
+    // メダル数
+    const medals = { gold: 0, silver: 0, bronze: 0 };
+    allResults.forEach((r) => {
+      if (r.rank === 1) medals.gold++;
+      else if (r.rank === 2) medals.silver++;
+      else if (r.rank === 3) medals.bronze++;
+    });
+    // 勝率
+    const totalW = allResults.reduce((s, r) => s + (r.wins || 0), 0);
+    const totalL = allResults.reduce((s, r) => s + (r.losses || 0), 0);
+    const winRate = totalW + totalL > 0 ? Math.round((totalW / (totalW + totalL)) * 100) : 0;
+    // ゲーム別統計
+    const gameMap = {};
+    allResults.forEach((r) => {
+      if (!gameMap[r.game]) gameMap[r.game] = { game: r.game, color: r.game_color, count: 0, wins: 0, losses: 0 };
+      gameMap[r.game].count++;
+      gameMap[r.game].wins += r.wins || 0;
+      gameMap[r.game].losses += r.losses || 0;
+    });
+    const gameStats = Object.values(gameMap).sort((a, b) => b.count - a.count);
+    const mainGame = gameStats[0]?.game || null;
+    return { tournamentCount: count || 0, mainGame, results: allResults.slice(0, 5), medals, winRate, gameStats };
+  };
+
+  // 自分の bio / メインデッキを更新
+  const updateBio = async (bio) => {
+    if (!user) return;
+    await supabase.from("profiles").update({ bio }).eq("id", user.id);
+    await fetchProfile();
+  };
+
+  const updateMainDeck = async (mainDeck) => {
+    if (!user) return;
+    await supabase.from("profiles").update({ main_deck: mainDeck }).eq("id", user.id);
+    await fetchProfile();
   };
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
@@ -215,5 +291,9 @@ export const useProfile = () => {
     getActiveDisplayName,
     updateShippingAddress,
     getShippingAddress,
+    fetchPublicProfile,
+    fetchPublicProfileStats,
+    updateBio,
+    updateMainDeck,
   };
 };

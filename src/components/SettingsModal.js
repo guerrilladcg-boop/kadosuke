@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, Modal, StyleSheet, Alert, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, Modal, StyleSheet, Alert, ActivityIndicator, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Notifications from "expo-notifications";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
 import { useProfile } from "../hooks/useProfile";
@@ -61,6 +62,24 @@ export default function SettingsModal({ visible, onClose, profile: externalProfi
 
   // 通知トグルハンドラ（楽観的更新は useProfile 側で対応済み）
   const handleToggleNotifications = async (value) => {
+    if (value) {
+      // ONにする場合、OS権限を確認
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== "granted") {
+        const { status: newStatus } = await Notifications.requestPermissionsAsync();
+        if (newStatus !== "granted") {
+          Alert.alert(
+            "通知の許可が必要です",
+            "設定アプリで通知を許可してください",
+            [
+              { text: "キャンセル", style: "cancel" },
+              { text: "設定を開く", onPress: () => Linking.openSettings() },
+            ]
+          );
+          return;
+        }
+      }
+    }
     const { error } = await toggleNotifications(value);
     if (error) Alert.alert("エラー", "設定の更新に失敗しました");
   };

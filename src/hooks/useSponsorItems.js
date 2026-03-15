@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useAuthStore } from "../store/useAuthStore";
+import { addExperience } from "../store/useLevelStore";
+import { EXP_REWARDS } from "../constants/levels";
 
 export const useSponsorItems = () => {
   const [exchangeItems, setExchangeItems] = useState([]);
@@ -12,26 +14,37 @@ export const useSponsorItems = () => {
   const [myExchanges, setMyExchanges] = useState([]);
   const [myInstantResults, setMyInstantResults] = useState([]);
   const [loading, setLoading] = useState(true);
+  const initialLoadDone = useRef(false);
   const { user } = useAuthStore();
 
   const fetchItems = useCallback(async () => {
-    setLoading(true);
+    if (!initialLoadDone.current) setLoading(true);
     const { data } = await supabase
       .from("sponsor_items")
       .select("*")
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
     if (data) {
-      setExchangeItems(data.filter((i) => i.type === "exchange"));
-      setLotteryItems(data.filter((i) => i.type === "lottery"));
-      setInstantLotteryItems(data.filter(
+      const now = new Date();
+      // 抽選期間外の商品をフィルタリング（交換アイテムは影響なし）
+      const visibleData = data.filter((item) => {
+        if (item.type !== "lottery") return true;
+        if (item.lottery_start_at && new Date(item.lottery_start_at) > now) return false;
+        if (item.lottery_end_at && new Date(item.lottery_end_at) < now) return false;
+        return true;
+      });
+
+      setExchangeItems(visibleData.filter((i) => i.type === "exchange"));
+      setLotteryItems(visibleData.filter((i) => i.type === "lottery"));
+      setInstantLotteryItems(visibleData.filter(
         (i) => i.type === "lottery" && i.lottery_type === "instant"
       ));
-      setApplicationLotteryItems(data.filter(
+      setApplicationLotteryItems(visibleData.filter(
         (i) => i.type === "lottery" && (i.lottery_type === "application" || !i.lottery_type)
       ));
     }
     setLoading(false);
+    initialLoadDone.current = true;
   }, []);
 
   const fetchMyEntries = useCallback(async () => {
@@ -56,7 +69,7 @@ export const useSponsorItems = () => {
       .from("point_exchanges")
       .select("*, sponsor_items:item_id(name, icon, delivery_type)")
       .eq("user_id", user.id)
-      .eq("type", "exchange")
+      .in("type", ["exchange", "instant_lottery_win"])
       .order("created_at", { ascending: false });
     if (data) setMyExchanges(data);
   }, [user]);
@@ -129,6 +142,9 @@ export const useSponsorItems = () => {
       } : {}),
     });
 
+    // 経験値加算
+    await addExperience(user.id, EXP_REWARDS.EXCHANGE_ITEM);
+
     await fetchItems();
     await fetchMyExchanges();
     return { error: null };
@@ -172,6 +188,9 @@ export const useSponsorItems = () => {
       type: "lottery_entry",
     });
 
+    // 経験値加算
+    await addExperience(user.id, EXP_REWARDS.LOTTERY_ENTRY);
+
     await fetchItems();
     await fetchMyEntries();
     return { error: null };
@@ -183,7 +202,7 @@ export const useSponsorItems = () => {
     if (currentPoints < item.point_cost) return { error: "ポイント不足" };
 
     const prizes = instantPrizes[item.id] || [];
-    const availablePrizes = prizes.filter((p) => p.stock > 0);
+    const availablePrizes = prizes.filter((p) => p.stock === null || p.stock > 0);
     if (availablePrizes.length === 0) return { error: "景品が全て終了しています" };
 
     // 1. ポイント消費
@@ -208,17 +227,19 @@ export const useSponsorItems = () => {
       }
     }
 
-    // 3. 当選景品のstock-1更新
-    const { error: stockError } = await supabase
-      .from("instant_lottery_prizes")
-      .update({ stock: selectedPrize.stock - 1 })
-      .eq("id", selectedPrize.id);
-    if (stockError) {
-      // ロールバック
-      await supabase.from("profiles")
-        .update({ points: currentPoints })
-        .eq("id", user.id);
-      return { error: "在庫更新に失敗しました。再試行してください。" };
+    // 3. 当選景品のstock-1更新（stockがnullの場合は無限なのでスキップ）
+    if (selectedPrize.stock !== null) {
+      const { error: stockError } = await supabase
+        .from("instant_lottery_prizes")
+        .update({ stock: selectedPrize.stock - 1 })
+        .eq("id", selectedPrize.id);
+      if (stockError) {
+        // ロールバック
+        await supabase.from("profiles")
+          .update({ points: currentPoints })
+          .eq("id", user.id);
+        return { error: "在庫更新に失敗しました。再試行してください。" };
+      }
     }
 
     // 4. ポイント還元（はずれの場合）
@@ -241,13 +262,20 @@ export const useSponsorItems = () => {
       points_refunded: actualRefund,
     });
 
-    // 6. 監査記録
+    // 6. 監査記録（当たりは管理対象として、はずれは記録のみ）
     await supabase.from("point_exchanges").insert({
       user_id: user.id,
       item_id: item.id,
       points_spent: item.point_cost,
-      type: "instant_lottery",
+      type: selectedPrize.is_winning ? "instant_lottery_win" : "instant_lottery",
+      status: selectedPrize.is_winning ? "pending" : "completed",
+      delivery_type: selectedPrize.delivery_type || "digital",
+      prize_name: selectedPrize.name,
+      prize_icon: selectedPrize.icon,
     });
+
+    // 経験値加算
+    await addExperience(user.id, EXP_REWARDS.INSTANT_LOTTERY);
 
     await fetchItems();
     await fetchInstantPrizes();

@@ -5,10 +5,54 @@ import { C } from "../constants/theme";
 import { useMasterData } from "../hooks/useMasterData";
 import { REGIONS } from "../constants/prefectures";
 
+const formatDate = (d) => d.toISOString().split("T")[0];
+
+const DATE_PRESETS = [
+  {
+    label: "今週末",
+    calc: () => {
+      const now = new Date();
+      const day = now.getDay();
+      const sat = new Date(now); sat.setDate(now.getDate() + (6 - day));
+      const sun = new Date(sat); sun.setDate(sat.getDate() + 1);
+      return { from: formatDate(sat), to: formatDate(sun) };
+    },
+  },
+  {
+    label: "来週",
+    calc: () => {
+      const now = new Date();
+      const day = now.getDay();
+      const nextMon = new Date(now); nextMon.setDate(now.getDate() + (8 - day));
+      const nextSun = new Date(nextMon); nextSun.setDate(nextMon.getDate() + 6);
+      return { from: formatDate(nextMon), to: formatDate(nextSun) };
+    },
+  },
+  {
+    label: "今月",
+    calc: () => {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: formatDate(first), to: formatDate(last) };
+    },
+  },
+  {
+    label: "来月",
+    calc: () => {
+      const now = new Date();
+      const first = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+      return { from: formatDate(first), to: formatDate(last) };
+    },
+  },
+];
+
 export default function FilterModal({ visible, onClose, filters, onApply }) {
   const [games, setGames] = useState(filters.games || []);
   const [dateFrom, setDateFrom] = useState(filters.dateFrom || "");
   const [dateTo, setDateTo] = useState(filters.dateTo || "");
+  const [activePreset, setActivePreset] = useState("");
   const [location, setLocation] = useState(filters.location || "");
   const [entryFeeType, setEntryFeeType] = useState(filters.entryFeeType || "");
   const [locationType, setLocationType] = useState(filters.locationType || "");
@@ -51,6 +95,7 @@ export default function FilterModal({ visible, onClose, filters, onApply }) {
     setGames([]);
     setDateFrom("");
     setDateTo("");
+    setActivePreset("");
     setLocation("");
     setEntryFeeType("");
     setLocationType("");
@@ -193,13 +238,36 @@ export default function FilterModal({ visible, onClose, filters, onApply }) {
               <Text style={styles.sectionTitle}>
                 <Ionicons name="calendar-outline" size={14} color={C.textSub} /> 開催期間
               </Text>
-              <View style={styles.dateRow}>
+              <View style={styles.chipRow}>
+                {DATE_PRESETS.map((preset) => (
+                  <TouchableOpacity
+                    key={preset.label}
+                    style={[styles.chip, styles.chipMd, activePreset === preset.label && styles.chipActive]}
+                    onPress={() => {
+                      if (activePreset === preset.label) {
+                        setActivePreset("");
+                        setDateFrom("");
+                        setDateTo("");
+                      } else {
+                        const { from, to } = preset.calc();
+                        setActivePreset(preset.label);
+                        setDateFrom(from);
+                        setDateTo(to);
+                      }
+                    }}
+                  >
+                    <Ionicons name="calendar" size={14} color={activePreset === preset.label ? "#fff" : C.primary} />
+                    <Text style={[styles.chipText, activePreset === preset.label && { color: "#fff" }]}>{preset.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={[styles.dateRow, { marginTop: 10 }]}>
                 <TextInput
                   style={[styles.input, { flex: 1 }]}
                   placeholder="開始日 (例: 2026-03-01)"
                   placeholderTextColor={C.textSub}
                   value={dateFrom}
-                  onChangeText={setDateFrom}
+                  onChangeText={(v) => { setDateFrom(v); setActivePreset(""); }}
                 />
                 <Text style={styles.dateSep}>〜</Text>
                 <TextInput
@@ -207,7 +275,7 @@ export default function FilterModal({ visible, onClose, filters, onApply }) {
                   placeholder="終了日 (例: 2026-03-31)"
                   placeholderTextColor={C.textSub}
                   value={dateTo}
-                  onChangeText={setDateTo}
+                  onChangeText={(v) => { setDateTo(v); setActivePreset(""); }}
                 />
               </View>
 

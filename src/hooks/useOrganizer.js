@@ -79,9 +79,27 @@ export const useOrganizer = () => {
     if (!error) await fetchMyTournaments();
     return { error };
   };
+  // CSV結果インポート（単発大会用）
+  const importTournamentResults = async (tournamentId, csvData) => {
+    if (!user) return { error: "未ログイン" };
+    // 既存結果を削除してからINSERT
+    await supabase.from("tournament_results").delete().eq("tournament_id", tournamentId);
+    const rows = csvData.map((row) => ({
+      tournament_id: tournamentId,
+      player_name: row.player_name,
+      deck_name: row.deck_name,
+      ranking: row.ranking,
+      wins: row.wins,
+      losses: row.losses,
+      draws: row.draws,
+      points: row.points,
+    }));
+    const { error } = await supabase.from("tournament_results").insert(rows);
+    return { error };
+  };
   useEffect(() => {
     fetchProfile();
     fetchMyTournaments();
   }, [fetchProfile, fetchMyTournaments]);
-  return { isOrganizer, organizerStatus, myTournaments, loading, applyOrganizer, cancelApplication, createTournament, deleteTournament, refetch: fetchProfile };
+  return { isOrganizer, organizerStatus, myTournaments, loading, applyOrganizer, cancelApplication, createTournament, deleteTournament, importTournamentResults, refetch: fetchProfile };
 };

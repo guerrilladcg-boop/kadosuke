@@ -1,13 +1,16 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  TextInput, StyleSheet, ActivityIndicator
+  TextInput, StyleSheet, ActivityIndicator, Switch, RefreshControl
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { C } from "../constants/theme";
 import { useTournaments } from "../hooks/useTournaments";
 import { useOrganizer } from "../hooks/useOrganizer";
+import { useOrganizerFollows } from "../hooks/useOrganizerFollows";
+import { useDebounce } from "../utils/useDebounce";
 import TournamentDetailModal from "../components/TournamentDetailModal";
+import PublicProfileModal from "../components/PublicProfileModal";
 import FilterModal from "../components/FilterModal";
 import SortModal, { SORT_OPTIONS } from "../components/SortModal";
 import OrganizerApplyModal from "../components/OrganizerApplyModal";
@@ -50,11 +53,6 @@ function CalendarView({ tournaments, onSelect }) {
     if (month === 11) { setYear(y => y + 1); setMonth(0); }
     else setMonth(m => m + 1);
   };
-  const goToToday = () => {
-    setYear(today.getFullYear());
-    setMonth(today.getMonth());
-    setSelectedDay(today.getDate());
-  };
   const handleDayPress = (day) => {
     setSelectedDay(selectedDay === day ? null : day);
   };
@@ -66,25 +64,18 @@ function CalendarView({ tournaments, onSelect }) {
 
   return (
     <View style={cal.container}>
-      {/* ヘッダー */}
       <View style={cal.headerBar}>
         <TouchableOpacity onPress={prevMonth} style={cal.navBtn}>
           <Ionicons name="chevron-back" size={22} color={C.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={goToToday} style={cal.monthBtn}>
+        <View style={cal.monthBtn}>
           <Text style={cal.monthText}>{year}年 {month + 1}月</Text>
-          {!isCurrentMonth && (
-            <View style={cal.todayBtnSmall}>
-              <Text style={cal.todayBtnSmallText}>今日</Text>
-            </View>
-          )}
-        </TouchableOpacity>
+        </View>
         <TouchableOpacity onPress={nextMonth} style={cal.navBtn}>
           <Ionicons name="chevron-forward" size={22} color={C.text} />
         </TouchableOpacity>
       </View>
 
-      {/* サマリー */}
       <View style={cal.summaryBar}>
         <Ionicons name="calendar-outline" size={14} color={C.textSub} />
         <Text style={cal.summaryText}>
@@ -92,7 +83,6 @@ function CalendarView({ tournaments, onSelect }) {
         </Text>
       </View>
 
-      {/* 曜日ラベル */}
       <View style={cal.dayRow}>
         {DAYS.map((d, i) => (
           <View key={i} style={cal.dayLabelWrap}>
@@ -101,7 +91,6 @@ function CalendarView({ tournaments, onSelect }) {
         ))}
       </View>
 
-      {/* カレンダーグリッド */}
       <View style={cal.grid}>
         {cells.map((day, i) => {
           const hasTournament = day && tournamentDates[day];
@@ -120,17 +109,19 @@ function CalendarView({ tournaments, onSelect }) {
             >
               {day ? (
                 <View style={[cal.cellInner, isSelected && cal.selectedCellInner]}>
-                  {isToday && <View style={cal.todayCircle} />}
-                  <Text style={[
-                    cal.cellText,
-                    isToday && cal.todayText,
-                    isSelected && !isToday && cal.selectedText,
-                    dayOfWeek === 0 && !isToday && !isSelected && { color: "#EF4444" },
-                    dayOfWeek === 6 && !isToday && !isSelected && { color: "#3B82F6" },
-                    isPast && !isToday && !isSelected && { opacity: 0.4 },
-                  ]}>
-                    {day}
-                  </Text>
+                  <View style={cal.dayNumWrap}>
+                    {isToday && <View style={cal.todayCircle} />}
+                    <Text style={[
+                      cal.cellText,
+                      isToday && cal.todayText,
+                      isSelected && !isToday && cal.selectedText,
+                      dayOfWeek === 0 && !isToday && !isSelected && { color: "#EF4444" },
+                      dayOfWeek === 6 && !isToday && !isSelected && { color: "#3B82F6" },
+                      isPast && !isToday && !isSelected && { opacity: 0.4 },
+                    ]}>
+                      {day}
+                    </Text>
+                  </View>
                   {hasTournament && (
                     <View style={cal.dotRow}>
                       {tournamentDates[day].slice(0, 3).map((t, j) => (
@@ -148,7 +139,6 @@ function CalendarView({ tournaments, onSelect }) {
         })}
       </View>
 
-      {/* イベントセクション */}
       <View style={cal.eventSection}>
         <View style={cal.eventSectionHeader}>
           <Text style={cal.eventSectionTitle}>
@@ -164,7 +154,7 @@ function CalendarView({ tournaments, onSelect }) {
         <ScrollView style={cal.eventList} showsVerticalScrollIndicator={false}>
           {selectedDay ? (
             selectedDayTournaments.length > 0 ? (
-              selectedDayTournaments.map((t) => renderEventCard(t, onSelect, month))
+              selectedDayTournaments.map((t) => renderEventCard(t, onSelect))
             ) : (
               <View style={cal.noEventWrap}>
                 <Ionicons name="calendar-outline" size={28} color={C.border} />
@@ -181,7 +171,7 @@ function CalendarView({ tournaments, onSelect }) {
                       <Text style={cal.dayHeaderText}>{month + 1}/{day}（{DAYS[new Date(year, month, Number(day)).getDay()]}）</Text>
                       <Text style={cal.dayHeaderCount}>{ts.length}件</Text>
                     </View>
-                    {ts.map((t) => renderEventCard(t, onSelect, month))}
+                    {ts.map((t) => renderEventCard(t, onSelect))}
                   </View>
                 ))
             ) : (
@@ -198,7 +188,6 @@ function CalendarView({ tournaments, onSelect }) {
   );
 }
 
-// イベントカード共通レンダリング
 function renderEventCard(t, onSelect) {
   return (
     <TouchableOpacity key={t.id} style={cal.eventCard} onPress={() => onSelect(t)}>
@@ -223,11 +212,34 @@ function renderEventCard(t, onSelect) {
             </View>
           ) : null}
         </View>
-        {t.isEntered && (
-          <View style={cal.calEnteredBadge}>
-            <Text style={cal.calEnteredBadgeText}>エントリー済</Text>
-          </View>
-        )}
+        <View style={cal.eventBadgeRow}>
+          {t.isEntered && (
+            <View style={cal.calEnteredBadge}>
+              <Text style={cal.calEnteredBadgeText}>エントリー済</Text>
+            </View>
+          )}
+          {t.external_url && (
+            <View style={[cal.calEnteredBadge, { backgroundColor: "#3B82F6" }]}>
+              <Text style={cal.calEnteredBadgeText}>外部サイト</Text>
+            </View>
+          )}
+          {!t.external_url && t.max_players && t.remainingSlots != null && (
+            <View style={[cal.calEnteredBadge, {
+              backgroundColor: t.isCapacityFull ? C.danger : t.remainingSlots <= 3 ? C.warning : C.primary + "20",
+            }]}>
+              <Text style={[cal.calEnteredBadgeText, {
+                color: t.isCapacityFull || t.remainingSlots <= 3 ? "#fff" : C.primary,
+              }]}>
+                {t.isCapacityFull ? "満員" : `残${t.remainingSlots}枠`}
+              </Text>
+            </View>
+          )}
+          {t.isDeadlinePassed && !t.isEntered && (
+            <View style={[cal.calEnteredBadge, { backgroundColor: C.danger + "20" }]}>
+              <Text style={[cal.calEnteredBadgeText, { color: C.danger }]}>締切済</Text>
+            </View>
+          )}
+        </View>
       </View>
       <Ionicons name="chevron-forward" size={16} color={C.textSub} style={{ marginRight: 8 }} />
     </TouchableOpacity>
@@ -236,7 +248,8 @@ function renderEventCard(t, onSelect) {
 
 export default function SearchScreen() {
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState("list");
+  const debouncedQuery = useDebounce(query, 300);
+  const [viewMode, setViewMode] = useState("calendar");
   const [showFilter, setShowFilter] = useState(false);
   const [showSort, setShowSort] = useState(false);
   const [showApplyModal, setShowApplyModal] = useState(false);
@@ -252,7 +265,11 @@ export default function SearchScreen() {
   const [filterSelectedTags, setFilterSelectedTags] = useState([]);
   const [sortBy, setSortBy] = useState("date_asc");
   const [selectedTournament, setSelectedTournament] = useState(null);
+  const [followOnly, setFollowOnly] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const { tournaments, loading, search, toggleFavorite, toggleEntry } = useTournaments();
+  const { followedIdsArray, isFollowing, toggleFollow } = useOrganizerFollows();
+  const [profileUserId, setProfileUserId] = useState(null);
 
   const currentFilters = {
     games: filterGames, dateFrom, dateTo, location: filterLocation,
@@ -260,9 +277,10 @@ export default function SearchScreen() {
     prefecture: filterPrefecture, selectedTags: filterSelectedTags,
   };
 
-  const doSearch = (overrides = {}) => {
+  const doSearch = useCallback((overrides = {}) => {
+    const isFollowOnly = overrides.followOnly !== undefined ? overrides.followOnly : followOnly;
     search({
-      query: overrides.query !== undefined ? overrides.query : query,
+      query: overrides.query !== undefined ? overrides.query : debouncedQuery,
       games: overrides.games !== undefined ? overrides.games : filterGames,
       dateFrom: overrides.dateFrom !== undefined ? overrides.dateFrom : dateFrom,
       dateTo: overrides.dateTo !== undefined ? overrides.dateTo : dateTo,
@@ -272,10 +290,19 @@ export default function SearchScreen() {
       prefecture: overrides.prefecture !== undefined ? overrides.prefecture : filterPrefecture,
       selectedTags: overrides.selectedTags !== undefined ? overrides.selectedTags : filterSelectedTags,
       sortBy: overrides.sortBy !== undefined ? overrides.sortBy : sortBy,
+      followedOrganizerIds: isFollowOnly ? followedIdsArray : [],
     });
+  }, [debouncedQuery, filterGames, dateFrom, dateTo, filterLocation, filterEntryFeeType, filterLocationType, filterPrefecture, filterSelectedTags, sortBy, followOnly, followedIdsArray, search]);
+
+  React.useEffect(() => {
+    doSearch({ query: debouncedQuery });
+  }, [debouncedQuery]);
+
+  const handleFollowToggle = (val) => {
+    setFollowOnly(val);
+    doSearch({ followOnly: val });
   };
 
-  const handleSearch = (text) => { setQuery(text); doSearch({ query: text }); };
   const handleApplyFilter = (f) => {
     setFilterGames(f.games); setDateFrom(f.dateFrom); setDateTo(f.dateTo); setFilterLocation(f.location);
     setFilterEntryFeeType(f.entryFeeType); setFilterLocationType(f.locationType);
@@ -296,6 +323,12 @@ export default function SearchScreen() {
     if (selectedTournament?.id === t.id) setSelectedTournament({ ...t, isEntered: !t.isEntered });
   };
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await doSearch();
+    setRefreshing(false);
+  }, [doSearch]);
+
   const activeFilterCount =
     filterGames.length + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0) + (filterLocation ? 1 : 0) +
     (filterEntryFeeType ? 1 : 0) + (filterLocationType ? 1 : 0) + (filterPrefecture ? 1 : 0) +
@@ -305,9 +338,9 @@ export default function SearchScreen() {
     <View style={styles.container}>
       <View style={styles.searchBar}>
         <Ionicons name="search" size={18} color={C.textSub} />
-        <TextInput style={styles.searchInput} placeholder="大会名・ゲーム・主催者で検索..." placeholderTextColor={C.textSub} value={query} onChangeText={handleSearch} />
+        <TextInput style={styles.searchInput} placeholder="大会名・ゲーム・主催者で検索..." placeholderTextColor={C.textSub} value={query} onChangeText={setQuery} />
         {query.length > 0 && (
-          <TouchableOpacity onPress={() => handleSearch("")}>
+          <TouchableOpacity onPress={() => setQuery("")}>
             <Ionicons name="close-circle" size={18} color={C.textSub} />
           </TouchableOpacity>
         )}
@@ -335,6 +368,20 @@ export default function SearchScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      {followedIdsArray.length > 0 && (
+        <View style={styles.followToggleBar}>
+          <View style={styles.followToggleLeft}>
+            <Ionicons name="people" size={16} color={followOnly ? C.primary : C.textSub} />
+            <Text style={[styles.followToggleText, followOnly && { color: C.primary }]}>フォロー中の主催者のみ</Text>
+          </View>
+          <Switch
+            value={followOnly}
+            onValueChange={handleFollowToggle}
+            trackColor={{ false: C.border, true: "#FFCBA4" }}
+            thumbColor={followOnly ? C.primary : "#f4f4f4"}
+          />
+        </View>
+      )}
       {showOrganizerCta && (
         <TouchableOpacity style={styles.organizerCta} onPress={() => setShowApplyModal(true)}>
           <Ionicons name="ribbon-outline" size={20} color={C.primary} />
@@ -351,9 +398,17 @@ export default function SearchScreen() {
       {loading ? (
         <ActivityIndicator color={C.primary} style={{ marginTop: 40 }} />
       ) : viewMode === "list" ? (
-        <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.list}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+        >
           {tournaments.length === 0 ? (
-            <View style={styles.empty}><Text style={styles.emptyText}>大会が見つかりません</Text></View>
+            <View style={styles.empty}>
+              <Ionicons name="search-outline" size={48} color={C.border} />
+              <Text style={styles.emptyText}>大会が見つかりません</Text>
+              <Text style={styles.emptySubText}>フィルターを変更してみましょう</Text>
+            </View>
           ) : (
             tournaments.map((t) => (
               <TouchableOpacity key={t.id} style={styles.card} onPress={() => setSelectedTournament(t)} activeOpacity={0.7}>
@@ -367,7 +422,9 @@ export default function SearchScreen() {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.tournamentName}>{t.name}</Text>
-                <Text style={styles.organizerText}>{t.organizer}</Text>
+                <TouchableOpacity onPress={() => t.created_by && setProfileUserId(t.created_by)}>
+                  <Text style={[styles.organizerText, t.created_by && { color: C.primary }]}>{t.organizer}</Text>
+                </TouchableOpacity>
                 {t.location ? <Text style={styles.locationText}>{t.location}</Text> : null}
                 <View style={styles.badgeRow}>
                   {t.entry_fee_type === "paid" ? (
@@ -385,7 +442,26 @@ export default function SearchScreen() {
                   <View style={styles.tagRow}>
                     {(t.tags || []).map((tag, j) => (<View key={j} style={styles.tag}><Text style={styles.tagText}>#{tag}</Text></View>))}
                   </View>
-                  {t.isEntered && (<View style={styles.enteredBadge}><Text style={styles.enteredBadgeText}>エントリー済</Text></View>)}
+                  <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+                    {t.isEntered && (<View style={styles.enteredBadge}><Text style={styles.enteredBadgeText}>エントリー済</Text></View>)}
+                    {t.external_url && (<View style={[styles.enteredBadge, { backgroundColor: "#3B82F6" }]}><Text style={styles.enteredBadgeText}>外部サイト ↗</Text></View>)}
+                    {!t.external_url && t.max_players && t.remainingSlots != null && (
+                      <View style={[styles.enteredBadge, {
+                        backgroundColor: t.isCapacityFull ? C.danger : t.remainingSlots <= 3 ? C.warning : C.primary + "20",
+                      }]}>
+                        <Text style={[styles.enteredBadgeText, {
+                          color: t.isCapacityFull || t.remainingSlots <= 3 ? "#fff" : C.primary,
+                        }]}>
+                          {t.isCapacityFull ? "満員" : `残${t.remainingSlots}枠`}
+                        </Text>
+                      </View>
+                    )}
+                    {t.isDeadlinePassed && !t.isEntered && (
+                      <View style={[styles.enteredBadge, { backgroundColor: C.danger + "20" }]}>
+                        <Text style={[styles.enteredBadgeText, { color: C.danger }]}>締切済</Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
               </TouchableOpacity>
             ))
@@ -395,7 +471,8 @@ export default function SearchScreen() {
       ) : (
         <CalendarView tournaments={tournaments} onSelect={setSelectedTournament} />
       )}
-      <TournamentDetailModal tournament={selectedTournament} visible={!!selectedTournament} onClose={() => setSelectedTournament(null)} onToggleFavorite={handleToggleFavorite} onToggleEntry={handleToggleEntry} />
+      <TournamentDetailModal tournament={selectedTournament} visible={!!selectedTournament} onClose={() => setSelectedTournament(null)} onToggleFavorite={handleToggleFavorite} onToggleEntry={handleToggleEntry} onToggleFollow={toggleFollow} isFollowingOrganizer={selectedTournament ? isFollowing(selectedTournament.created_by) : false} />
+      <PublicProfileModal visible={!!profileUserId} onClose={() => setProfileUserId(null)} userId={profileUserId} />
     </View>
   );
 }
@@ -441,8 +518,12 @@ const styles = StyleSheet.create({
   organizerCta: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFF3ED", marginHorizontal: 16, marginBottom: 8, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: "#FFDFCC" },
   organizerCtaTitle: { fontSize: 13, fontWeight: "bold", color: C.text },
   organizerCtaSub: { fontSize: 11, color: C.textSub, marginTop: 2 },
-  empty: { alignItems: "center", marginTop: 60 },
-  emptyText: { fontSize: 16, color: C.textSub },
+  empty: { alignItems: "center", marginTop: 60, gap: 8 },
+  emptyText: { fontSize: 16, fontWeight: "bold", color: C.textSub },
+  emptySubText: { fontSize: 13, color: C.textSub, marginTop: 4 },
+  followToggleBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginHorizontal: 16, marginBottom: 8, backgroundColor: C.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, elevation: 1 },
+  followToggleLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  followToggleText: { fontSize: 13, fontWeight: "600", color: C.textSub },
 });
 
 const cal = StyleSheet.create({
@@ -451,8 +532,6 @@ const cal = StyleSheet.create({
   navBtn: { padding: 10 },
   monthBtn: { flexDirection: "row", alignItems: "center", gap: 8 },
   monthText: { fontSize: 17, fontWeight: "bold", color: C.text },
-  todayBtnSmall: { backgroundColor: C.primary, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  todayBtnSmallText: { fontSize: 10, color: "#fff", fontWeight: "bold" },
   summaryBar: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 20, paddingVertical: 6 },
   summaryText: { fontSize: 12, color: C.textSub },
   dayRow: { flexDirection: "row", paddingHorizontal: 12, marginTop: 4 },
@@ -462,7 +541,8 @@ const cal = StyleSheet.create({
   cell: { width: "14.28%", paddingVertical: 2, alignItems: "center" },
   cellInner: { width: 38, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 10 },
   selectedCellInner: { backgroundColor: "#FFF3ED" },
-  todayCircle: { position: "absolute", top: 4, width: 26, height: 26, borderRadius: 13, backgroundColor: C.primary },
+  dayNumWrap: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  todayCircle: { position: "absolute", width: 28, height: 28, borderRadius: 14, backgroundColor: C.primary },
   cellText: { fontSize: 14, color: C.text, zIndex: 1 },
   todayText: { color: "#fff", fontWeight: "bold" },
   selectedText: { color: C.primary, fontWeight: "bold" },
@@ -487,7 +567,8 @@ const cal = StyleSheet.create({
   eventMeta: { flexDirection: "row", gap: 12, marginTop: 4 },
   eventMetaItem: { flexDirection: "row", alignItems: "center", gap: 3 },
   eventMetaText: { fontSize: 11, color: C.textSub },
-  calEnteredBadge: { backgroundColor: "#DCFCE7", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2, alignSelf: "flex-start", marginTop: 4 },
+  eventBadgeRow: { flexDirection: "row", gap: 4, flexWrap: "wrap", marginTop: 4 },
+  calEnteredBadge: { backgroundColor: "#DCFCE7", borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2 },
   calEnteredBadgeText: { fontSize: 10, color: "#16A34A", fontWeight: "bold" },
   noEventWrap: { alignItems: "center", justifyContent: "center", paddingVertical: 40, gap: 8 },
   noEvent: { fontSize: 14, color: C.textSub },

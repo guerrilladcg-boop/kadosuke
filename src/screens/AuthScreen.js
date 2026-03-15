@@ -10,6 +10,7 @@ export default function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [loading, setLoading] = useState(false);
   const { signIn, signUp } = useAuthStore();
 
@@ -49,7 +50,7 @@ export default function AuthScreen() {
     setLoading(true);
     const { error } = isLogin
       ? await signIn(email, password)
-      : await signUp(email, password);
+      : await signUp(email, password, referralCode.trim() || undefined);
     setLoading(false);
     if (error) {
       // エラーメッセージを日本語化
@@ -105,6 +106,17 @@ export default function AuthScreen() {
           onChangeText={setPassword}
           secureTextEntry
         />
+        {!isLogin && (
+          <TextInput
+            style={[styles.input, styles.referralInput]}
+            placeholder="招待コード（任意）"
+            placeholderTextColor={C.textSub}
+            value={referralCode}
+            onChangeText={(t) => setReferralCode(t.toUpperCase())}
+            autoCapitalize="characters"
+            maxLength={6}
+          />
+        )}
         <TouchableOpacity
           style={[styles.btn, loading && { opacity: 0.6 }]}
           onPress={handleSubmit}
@@ -135,6 +147,7 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 14, fontWeight: "600", color: C.textSub },
   tabTextActive: { color: "#fff" },
   input: { backgroundColor: C.card, borderRadius: 10, padding: 14, fontSize: 15, color: C.text, marginBottom: 12, borderWidth: 1, borderColor: C.border },
+  referralInput: { letterSpacing: 4, fontSize: 16, textAlign: "center" },
   btn: { backgroundColor: C.primary, borderRadius: 10, padding: 16, alignItems: "center", marginTop: 8 },
   btnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   forgotBtn: { alignItems: "center", marginTop: 16 },

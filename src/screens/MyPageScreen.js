@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, StyleSheet, Alert, Modal, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, StyleSheet, Alert, Modal, ActivityIndicator, RefreshControl } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
+import { getLevelFromExp, getTitleForLevel } from "../constants/levels";
 import { useAuthStore } from "../store/useAuthStore";
 import { useOrganizer } from "../hooks/useOrganizer";
 import { useAdmin } from "../hooks/useAdmin";
@@ -15,6 +17,12 @@ import OrganizerApplyModal from "../components/OrganizerApplyModal";
 import PremiumModal from "../components/PremiumModal";
 import ProfileImagePicker from "../components/ProfileImagePicker";
 import DisplayNameSwitcher from "../components/DisplayNameSwitcher";
+import OrganizerAnalyticsModal from "../components/OrganizerAnalyticsModal";
+import LeagueManageModal from "../components/LeagueManageModal";
+import SponsorRequestModal from "../components/SponsorRequestModal";
+import CSVImportModal from "../components/CSVImportModal";
+import { shareProfile, shareReferralCode } from "../utils/share";
+import { showError } from "../utils/errorHelper";
 
 export default function MyPageScreen() {
   const { user, signOut } = useAuthStore();
@@ -22,6 +30,8 @@ export default function MyPageScreen() {
     profile, fetchProfile, updateName, updateEmail, requestPasswordReset, uploadAvatar,
     toggleNotifications, toggleTournamentEntry, toggleFavoriteOrganizer, toggleSponsorItems,
     updateDisplayNames, switchDisplayName,
+    updateShippingAddress, getShippingAddress,
+    updateBio, updateMainDeck,
   } = useProfile();
   const [showCreateTournament, setShowCreateTournament] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -31,14 +41,24 @@ export default function MyPageScreen() {
   const [showPremium, setShowPremium] = useState(false);
   const [showDisplayNames, setShowDisplayNames] = useState(false);
   const [showNotifSettings, setShowNotifSettings] = useState(false);
+  // 主催者ツール用モーダル
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showLeague, setShowLeague] = useState(false);
+  const [showSponsorReq, setShowSponsorReq] = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(false);
+  const [csvTargetTournament, setCsvTargetTournament] = useState(null);
   // 編集状態
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState("");
   const [editingEmail, setEditingEmail] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [showAddressEdit, setShowAddressEdit] = useState(false);
+  const [addressForm, setAddressForm] = useState({});
 
-  const { isOrganizer, organizerStatus, myTournaments, applyOrganizer, cancelApplication, deleteTournament } = useOrganizer();
+  const { isOrganizer, organizerStatus, myTournaments, applyOrganizer, cancelApplication, deleteTournament, importTournamentResults } = useOrganizer();
   const { isAdmin } = useAdmin();
   const { isPremium, premiumType, purchasePremium, cancelPremium } = usePremium();
   const { myExchanges } = useSponsorItems();
@@ -59,7 +79,7 @@ export default function MyPageScreen() {
     if (!newName.trim()) return;
     const { error } = await updateName(newName);
     if (!error) { setEditingName(false); setNewName(""); }
-    else Alert.alert("エラー", "保存に失敗しました");
+    else showError(error, "名前の保存に失敗しました");
   };
 
   const handleSaveEmail = async () => {
@@ -70,7 +90,7 @@ export default function MyPageScreen() {
       setEditingEmail(false);
       setNewEmail("");
     } else {
-      Alert.alert("エラー", "メールアドレスの変更に失敗しました");
+      showError(error, "メールアドレスの変更に失敗しました");
     }
   };
 
@@ -78,7 +98,7 @@ export default function MyPageScreen() {
     setUploading(true);
     const { error } = await uploadAvatar(uri);
     setUploading(false);
-    if (error) Alert.alert("エラー", "画像のアップロードに失敗しました");
+    if (error) showError(error, "画像のアップロードに失敗しました");
   };
 
   const handleSaveDisplayNames = async (names, activeIdx) => {
@@ -109,19 +129,19 @@ export default function MyPageScreen() {
   // 通知ハンドラ
   const handleToggleNotifications = async (value) => {
     const { error } = await toggleNotifications(value);
-    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+    if (error) showError(error, "設定の更新に失敗しました");
   };
   const handleToggleTournamentEntry = async (value) => {
     const { error } = await toggleTournamentEntry(value);
-    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+    if (error) showError(error, "設定の更新に失敗しました");
   };
   const handleToggleFavoriteOrganizer = async (value) => {
     const { error } = await toggleFavoriteOrganizer(value);
-    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+    if (error) showError(error, "設定の更新に失敗しました");
   };
   const handleToggleSponsorItems = async (value) => {
     const { error } = await toggleSponsorItems(value);
-    if (error) Alert.alert("エラー", "設定の更新に失敗しました");
+    if (error) showError(error, "設定の更新に失敗しました");
   };
 
   const handlePasswordReset = () => {
@@ -145,11 +165,50 @@ export default function MyPageScreen() {
     );
   };
 
+  const handleOpenAddressEdit = () => {
+    const addr = getShippingAddress() || {};
+    setAddressForm(addr);
+    setShowAccountSettings(false);
+    setTimeout(() => setShowAddressEdit(true), 350);
+  };
+
+  const handleSaveAddress = async () => {
+    if (!addressForm.shipping_name || !addressForm.shipping_zip || !addressForm.shipping_prefecture || !addressForm.shipping_city || !addressForm.shipping_address || !addressForm.shipping_phone) {
+      Alert.alert("エラー", "必須項目を入力してください");
+      return;
+    }
+    const { error } = await updateShippingAddress(addressForm);
+    if (!error) {
+      Alert.alert("完了", "配送先住所を保存しました");
+      setShowAddressEdit(false);
+      setTimeout(() => setShowAccountSettings(true), 350);
+    } else {
+      showError(error, "住所の保存に失敗しました");
+    }
+  };
+
   const masterNotifEnabled = profile?.push_notifications_enabled ?? true;
 
+  const handleInvite = () => {
+    const code = profile?.referral_code;
+    if (!code) {
+      Alert.alert("招待コード", "招待コードの生成中です。再度お試しください。");
+      return;
+    }
+    Alert.alert(
+      "友達を招待",
+      `あなたの招待コード:\n\n${code}\n\n友達がこのコードで登録すると、あなたに100pt・友達に50ptが付与されます。`,
+      [
+        { text: "閉じる", style: "cancel" },
+        { text: "コードをシェア", onPress: () => shareReferralCode(code) },
+      ]
+    );
+  };
+
   const MENU = [
+    { icon: "people-outline", label: "友達を招待", onPress: handleInvite },
+    { icon: "share-social-outline", label: "プロフィールをシェア", onPress: () => shareProfile(displayName) },
     { icon: "notifications-outline", label: "通知設定", onPress: () => setShowNotifSettings(true) },
-    { icon: "lock-closed-outline", label: "パスワード変更", onPress: handlePasswordReset },
     ...(isAdmin ? [{ icon: "shield-checkmark-outline", label: "管理画面", onPress: () => setShowAdmin(true) }] : []),
     { icon: "log-out-outline", label: "ログアウト", onPress: handleSignOut, danger: true },
   ];
@@ -165,11 +224,51 @@ export default function MyPageScreen() {
     return null;
   };
 
+  // CSV結果インポートハンドラ
+  const handleCSVImportForTournament = (tournament) => {
+    setCsvTargetTournament(tournament);
+    setShowCSVImport(true);
+  };
+
+  const handleCSVImportData = async (parsedData) => {
+    if (!csvTargetTournament) return;
+    const { error } = await importTournamentResults(csvTargetTournament.id, parsedData);
+    if (error) throw error;
+  };
+
   // --- 主催者セクション ---
   const renderOrganizerSection = () => {
     if (isOrganizer) {
       return (
         <>
+          {/* 主催者ツールバー */}
+          <View style={styles.toolbarRow}>
+            <TouchableOpacity style={styles.toolbarItem} onPress={() => setShowAnalytics(true)}>
+              <View style={[styles.toolbarIconWrap, { backgroundColor: "#3B82F620" }]}>
+                <Ionicons name="bar-chart-outline" size={22} color="#3B82F6" />
+              </View>
+              <Text style={styles.toolbarLabel}>分析</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.toolbarItem} onPress={() => setShowCreateTournament(true)}>
+              <View style={[styles.toolbarIconWrap, { backgroundColor: C.primary + "20" }]}>
+                <Ionicons name="clipboard-outline" size={22} color={C.primary} />
+              </View>
+              <Text style={styles.toolbarLabel}>テンプレート</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.toolbarItem} onPress={() => setShowLeague(true)}>
+              <View style={[styles.toolbarIconWrap, { backgroundColor: "#8B5CF620" }]}>
+                <Ionicons name="trophy-outline" size={22} color="#8B5CF6" />
+              </View>
+              <Text style={styles.toolbarLabel}>リーグ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.toolbarItem} onPress={() => setShowSponsorReq(true)}>
+              <View style={[styles.toolbarIconWrap, { backgroundColor: "#16A34A20" }]}>
+                <Ionicons name="people-outline" size={22} color="#16A34A" />
+              </View>
+              <Text style={styles.toolbarLabel}>スポンサー</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>主催している大会</Text>
             <TouchableOpacity onPress={() => setShowCreateTournament(true)}>
@@ -193,6 +292,10 @@ export default function MyPageScreen() {
                     {new Date(t.date).toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
                   </Text>
                 </View>
+                <TouchableOpacity onPress={() => handleCSVImportForTournament(t)} style={styles.csvImportBtn}>
+                  <Ionicons name="cloud-upload-outline" size={16} color={C.primary} />
+                  <Text style={styles.csvImportBtnText}>結果</Text>
+                </TouchableOpacity>
                 <TouchableOpacity onPress={() => handleDeleteTournament(t)} style={styles.deleteBtn}>
                   <Ionicons name="trash-outline" size={20} color={C.danger} />
                 </TouchableOpacity>
@@ -247,7 +350,11 @@ export default function MyPageScreen() {
 
   return (
     <>
-      <ScrollView style={styles.screen} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.screen}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await fetchProfile(); setRefreshing(false); }} tintColor={C.primary} colors={[C.primary]} />}
+      >
         {/* === プロフィールカード（直接編集可能） === */}
         <View style={styles.profileCard}>
           <View style={styles.profileTop}>
@@ -273,32 +380,67 @@ export default function MyPageScreen() {
             </View>
           </View>
 
-          {/* プロフィール編集メニュー */}
-          <View style={styles.profileActions}>
-            <TouchableOpacity
-              style={styles.profileActionItem}
-              onPress={() => { setNewName(displayName); setEditingName(true); }}
-            >
-              <Ionicons name="person-outline" size={16} color={C.primary} />
-              <Text style={styles.profileActionLabel}>名前変更</Text>
-            </TouchableOpacity>
-            <View style={styles.profileActionDivider} />
-            <TouchableOpacity
-              style={styles.profileActionItem}
-              onPress={() => { setNewEmail(""); setEditingEmail(true); }}
-            >
-              <Ionicons name="mail-outline" size={16} color={C.primary} />
-              <Text style={styles.profileActionLabel}>メール変更</Text>
-            </TouchableOpacity>
-            <View style={styles.profileActionDivider} />
-            <TouchableOpacity
-              style={styles.profileActionItem}
-              onPress={() => setShowDisplayNames(true)}
-            >
-              <Ionicons name="swap-horizontal-outline" size={16} color={C.primary} />
-              <Text style={styles.profileActionLabel}>表示名</Text>
-            </TouchableOpacity>
-          </View>
+          {/* 登録情報の照会・変更 */}
+          <TouchableOpacity
+            style={styles.accountSettingsItem}
+            onPress={() => setShowAccountSettings(true)}
+          >
+            <Ionicons name="create-outline" size={18} color={C.primary} />
+            <Text style={styles.accountSettingsLabel}>登録情報の照会・変更</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+          </TouchableOpacity>
+
+          {/* === レベル・称号 === */}
+          {profile && (() => {
+            const exp = profile.experience || 0;
+            const level = profile.level || getLevelFromExp(exp);
+            const title = getTitleForLevel(level);
+            return (
+              <View style={styles.levelSection}>
+                <View style={styles.levelRow}>
+                  <View style={styles.levelBadge}>
+                    <Text style={styles.levelBadgeText}>Lv.{level}</Text>
+                  </View>
+                  <Text style={styles.levelTitle}>{title}</Text>
+                </View>
+              </View>
+            );
+          })()}
+
+          {/* === 自己紹介・メインデッキ === */}
+          <TouchableOpacity
+            style={styles.accountSettingsItem}
+            onPress={() => {
+              Alert.prompt
+                ? Alert.prompt("自己紹介", "200文字以内で入力", (text) => { if (text !== null) updateBio(text.slice(0, 200)); }, "plain-text", profile?.bio || "")
+                : Alert.alert("自己紹介", profile?.bio || "未設定", [
+                    { text: "閉じる", style: "cancel" },
+                  ]);
+            }}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={18} color={C.primary} />
+            <Text style={styles.accountSettingsLabel}>自己紹介</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ fontSize: 12, color: C.textSub, maxWidth: 150 }} numberOfLines={1}>{profile?.bio || "未設定"}</Text>
+            <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.accountSettingsItem}
+            onPress={() => {
+              Alert.prompt
+                ? Alert.prompt("メインデッキ", "使用デッキ名を入力", (text) => { if (text !== null) updateMainDeck(text); }, "plain-text", profile?.main_deck || "")
+                : Alert.alert("メインデッキ", profile?.main_deck || "未設定", [
+                    { text: "閉じる", style: "cancel" },
+                  ]);
+            }}
+          >
+            <Ionicons name="albums-outline" size={18} color={C.primary} />
+            <Text style={styles.accountSettingsLabel}>メインデッキ</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ fontSize: 12, color: C.textSub, maxWidth: 150 }} numberOfLines={1}>{profile?.main_deck || "未設定"}</Text>
+            <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+          </TouchableOpacity>
         </View>
 
         {/* === 主催者セクション === */}
@@ -310,37 +452,77 @@ export default function MyPageScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>交換履歴</Text>
             </View>
-            {myExchanges.map((ex) => (
-              <View key={ex.id} style={styles.exchangeHistoryItem}>
-                <Text style={styles.exchangeHistoryIcon}>{ex.sponsor_items?.icon || "🎁"}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.exchangeHistoryName}>{ex.sponsor_items?.name || "不明な商品"}</Text>
-                  <Text style={styles.exchangeHistoryDate}>
-                    {new Date(ex.created_at).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })}
-                    {" · "}{ex.points_spent}pt
-                  </Text>
-                </View>
-                <View style={[
-                  styles.exchangeStatusBadge,
-                  ex.status === "pending" && { backgroundColor: "#FEF3C7" },
-                  ex.status === "shipped" && { backgroundColor: "#DBEAFE" },
-                  ex.status === "completed" && { backgroundColor: "#DCFCE7" },
-                  ex.status === "cancelled" && { backgroundColor: "#FEE2E2" },
-                ]}>
-                  <Text style={[
-                    styles.exchangeStatusText,
-                    ex.status === "pending" && { color: "#D97706" },
-                    ex.status === "shipped" && { color: "#2563EB" },
-                    ex.status === "completed" && { color: "#16A34A" },
-                    ex.status === "cancelled" && { color: "#EF4444" },
+            {myExchanges.map((ex) => {
+              const displayIcon = ex.prize_icon || ex.sponsor_items?.icon || "🎁";
+              const displayName = ex.type === "instant_lottery_win"
+                ? (ex.prize_name || ex.sponsor_items?.name || "即時抽選当選")
+                : (ex.sponsor_items?.name || "不明な商品");
+              const hasGiftCode = ex.status === "completed" && ex.gift_code;
+
+              return (
+                <TouchableOpacity
+                  key={ex.id}
+                  style={styles.exchangeHistoryItem}
+                  activeOpacity={hasGiftCode ? 0.6 : 1}
+                  onPress={() => {
+                    if (hasGiftCode) {
+                      Alert.alert(
+                        "🎫 ギフトコード",
+                        ex.gift_code,
+                        [
+                          { text: "閉じる", style: "cancel" },
+                          {
+                            text: "コピー",
+                            onPress: async () => {
+                              await Clipboard.setStringAsync(ex.gift_code);
+                              Alert.alert("コピーしました", "ギフトコードをクリップボードにコピーしました");
+                            },
+                          },
+                        ]
+                      );
+                    }
+                  }}
+                >
+                  <Text style={styles.exchangeHistoryIcon}>{displayIcon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                      <Text style={styles.exchangeHistoryName}>{displayName}</Text>
+                      {ex.type === "instant_lottery_win" && (
+                        <Text style={{ fontSize: 10, color: C.primary, fontWeight: "bold" }}>抽選</Text>
+                      )}
+                    </View>
+                    <Text style={styles.exchangeHistoryDate}>
+                      {new Date(ex.created_at).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })}
+                      {" · "}{ex.points_spent}pt
+                    </Text>
+                    {hasGiftCode && (
+                      <Text style={{ fontSize: 11, color: C.primary, marginTop: 2 }}>
+                        🎫 タップしてコードを表示
+                      </Text>
+                    )}
+                  </View>
+                  <View style={[
+                    styles.exchangeStatusBadge,
+                    ex.status === "pending" && { backgroundColor: "#FEF3C7" },
+                    ex.status === "shipped" && { backgroundColor: "#DBEAFE" },
+                    ex.status === "completed" && { backgroundColor: "#DCFCE7" },
+                    ex.status === "cancelled" && { backgroundColor: "#FEE2E2" },
                   ]}>
-                    {ex.status === "pending" ? "対応待ち" :
-                     ex.status === "shipped" ? "発送済み" :
-                     ex.status === "completed" ? "完了" : "キャンセル"}
-                  </Text>
-                </View>
-              </View>
-            ))}
+                    <Text style={[
+                      styles.exchangeStatusText,
+                      ex.status === "pending" && { color: "#D97706" },
+                      ex.status === "shipped" && { color: "#2563EB" },
+                      ex.status === "completed" && { color: "#16A34A" },
+                      ex.status === "cancelled" && { color: "#EF4444" },
+                    ]}>
+                      {ex.status === "pending" ? "対応待ち" :
+                       ex.status === "shipped" ? "発送済み" :
+                       ex.status === "completed" ? "完了" : "キャンセル"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </>
         )}
 
@@ -598,6 +780,103 @@ export default function MyPageScreen() {
         </View>
       </Modal>
 
+      {/* === 登録情報の照会・変更モーダル === */}
+      <Modal visible={showAccountSettings} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.modalContainer, { paddingTop: insets.top || 16 }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowAccountSettings(false)} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>閉じる</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>登録情報</Text>
+            <View style={styles.modalHeaderBtn} />
+          </View>
+          <ScrollView style={{ padding: 16 }}>
+            <Text style={styles.notifSectionLabel}>基本情報</Text>
+            <View style={styles.notifSection}>
+              <TouchableOpacity style={styles.settingsMenuItem} onPress={() => { setNewName(displayName); setEditingName(true); }}>
+                <Ionicons name="person-outline" size={20} color={C.text} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.settingsMenuLabel}>名前</Text>
+                  <Text style={styles.settingsMenuValue}>{displayName}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+              </TouchableOpacity>
+              <View style={styles.notifDivider} />
+              <TouchableOpacity style={styles.settingsMenuItem} onPress={() => { setNewEmail(""); setEditingEmail(true); }}>
+                <Ionicons name="mail-outline" size={20} color={C.text} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.settingsMenuLabel}>メールアドレス</Text>
+                  <Text style={styles.settingsMenuValue}>{user?.email}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+              </TouchableOpacity>
+              <View style={styles.notifDivider} />
+              <TouchableOpacity style={styles.settingsMenuItem} onPress={handlePasswordReset}>
+                <Ionicons name="key-outline" size={20} color={C.text} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.settingsMenuLabel}>パスワード変更</Text>
+                  <Text style={styles.settingsMenuValue}>メールでリセット</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.notifSectionLabel}>配送先住所</Text>
+            <View style={styles.notifSection}>
+              <TouchableOpacity style={styles.settingsMenuItem} onPress={handleOpenAddressEdit}>
+                <Ionicons name="home-outline" size={20} color={C.text} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.settingsMenuLabel}>配送先住所</Text>
+                  <Text style={styles.settingsMenuValue}>
+                    {profile?.shipping_name ? `${profile.shipping_prefecture} ${profile.shipping_city}` : "未設定"}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* === 配送先住所編集モーダル === */}
+      <Modal visible={showAddressEdit} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.modalContainer, { paddingTop: insets.top || 16 }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => { setShowAddressEdit(false); setTimeout(() => setShowAccountSettings(true), 350); }} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>キャンセル</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>配送先住所</Text>
+            <TouchableOpacity onPress={handleSaveAddress} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>保存</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+            <Text style={styles.addressLabel}>氏名 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_name || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_name: v}))} placeholder="山田 太郎" placeholderTextColor={C.textSub} />
+
+            <Text style={styles.addressLabel}>郵便番号 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_zip || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_zip: v}))} placeholder="123-4567" placeholderTextColor={C.textSub} keyboardType="number-pad" />
+
+            <Text style={styles.addressLabel}>都道府県 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_prefecture || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_prefecture: v}))} placeholder="東京都" placeholderTextColor={C.textSub} />
+
+            <Text style={styles.addressLabel}>市区町村 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_city || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_city: v}))} placeholder="渋谷区" placeholderTextColor={C.textSub} />
+
+            <Text style={styles.addressLabel}>番地 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_address || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_address: v}))} placeholder="1-2-3" placeholderTextColor={C.textSub} />
+
+            <Text style={styles.addressLabel}>建物名・部屋番号</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_building || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_building: v}))} placeholder="マンション101" placeholderTextColor={C.textSub} />
+
+            <Text style={styles.addressLabel}>電話番号 *</Text>
+            <TextInput style={styles.editInput} value={addressForm.shipping_phone || ""} onChangeText={(v) => setAddressForm(f => ({...f, shipping_phone: v}))} placeholder="090-1234-5678" placeholderTextColor={C.textSub} keyboardType="phone-pad" />
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+
       {/* === 表示名切り替えモーダル === */}
       <DisplayNameSwitcher
         visible={showDisplayNames}
@@ -628,6 +907,27 @@ export default function MyPageScreen() {
         onPurchase={purchasePremium}
         onCancel={cancelPremium}
       />
+
+      {/* === 主催者ツール: 分析 === */}
+      <OrganizerAnalyticsModal visible={showAnalytics} onClose={() => setShowAnalytics(false)} />
+
+      {/* === 主催者ツール: リーグ === */}
+      <LeagueManageModal visible={showLeague} onClose={() => setShowLeague(false)} />
+
+      {/* === 主催者ツール: スポンサー === */}
+      <SponsorRequestModal
+        visible={showSponsorReq}
+        onClose={() => setShowSponsorReq(false)}
+        myTournaments={myTournaments}
+      />
+
+      {/* === CSV結果インポート === */}
+      <CSVImportModal
+        visible={showCSVImport}
+        onClose={() => { setShowCSVImport(false); setCsvTargetTournament(null); }}
+        onImport={handleCSVImportData}
+        title={csvTargetTournament ? `${csvTargetTournament.name} 結果登録` : "結果をインポート"}
+      />
     </>
   );
 }
@@ -642,10 +942,18 @@ const styles = StyleSheet.create({
   profileNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   profileName: { fontSize: 18, fontWeight: "bold", color: C.text },
   profileEmail: { fontSize: 13, color: C.textSub, marginTop: 2 },
-  profileActions: { flexDirection: "row", borderTopWidth: 1, borderTopColor: C.border },
-  profileActionItem: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12 },
-  profileActionLabel: { fontSize: 13, color: C.primary, fontWeight: "600" },
-  profileActionDivider: { width: 1, backgroundColor: C.border, marginVertical: 8 },
+  accountSettingsItem: { flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 16, paddingVertical: 14 },
+  accountSettingsLabel: { fontSize: 14, color: C.primary, fontWeight: "600" },
+  // レベル
+  levelSection: { borderTopWidth: 1, borderTopColor: C.border, paddingHorizontal: 16, paddingVertical: 12 },
+  levelRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  levelBadge: { backgroundColor: "#FFF8E1", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: "#FFD700" },
+  levelBadgeText: { fontSize: 13, fontWeight: "bold", color: "#B8860B" },
+  levelTitle: { fontSize: 14, fontWeight: "bold", color: "#B8860B" },
+  settingsMenuItem: { flexDirection: "row", alignItems: "center", padding: 16 },
+  settingsMenuLabel: { fontSize: 15, color: C.text },
+  settingsMenuValue: { fontSize: 13, color: C.textSub, marginTop: 2 },
+  addressLabel: { fontSize: 13, fontWeight: "bold", color: C.textSub, marginBottom: 6, marginTop: 16 },
   // 主催者
   organizerBadge: { backgroundColor: "#FEF3C7", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 },
   organizerBadgeText: { fontSize: 12, fontWeight: "bold", color: C.warning },
@@ -656,10 +964,24 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, color: C.textSub, marginBottom: 12 },
   createBtn: { backgroundColor: C.primary, borderRadius: 8, paddingHorizontal: 20, paddingVertical: 10 },
   createBtnText: { color: "#fff", fontWeight: "bold", fontSize: 14 },
+  // 主催者ツールバー
+  toolbarRow: {
+    flexDirection: "row", backgroundColor: C.card, borderRadius: 12,
+    padding: 12, marginBottom: 12, elevation: 2, justifyContent: "space-around",
+  },
+  toolbarItem: { alignItems: "center", gap: 6 },
+  toolbarIconWrap: { width: 48, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  toolbarLabel: { fontSize: 11, fontWeight: "600", color: C.text },
   tournamentItem: { backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 8, flexDirection: "row", alignItems: "center", elevation: 2 },
   gameTag: { fontSize: 12, fontWeight: "bold", marginBottom: 2 },
   tournamentName: { fontSize: 15, fontWeight: "bold", color: C.text },
   tournamentDate: { fontSize: 12, color: C.textSub, marginTop: 2 },
+  csvImportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: C.primary + "15", borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6, marginRight: 4,
+  },
+  csvImportBtnText: { fontSize: 11, fontWeight: "bold", color: C.primary },
   deleteBtn: { padding: 8 },
   applyCard: { backgroundColor: C.card, borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", marginBottom: 10, elevation: 2 },
   pendingCard: { backgroundColor: "#FFFBEB", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", marginBottom: 10, elevation: 2, borderWidth: 1, borderColor: "#FDE68A" },

@@ -117,6 +117,22 @@ export const useAdmin = () => {
     return updateSponsorItem(id, { is_active: !currentActive });
   };
 
+  const deleteSponsorItem = async (id) => {
+    if (!user) return { error: "未ログイン" };
+    // 関連する画像をストレージから削除
+    const item = sponsorItems.find((i) => i.id === id);
+    if (item?.image_url) {
+      const path = item.image_url.split("/sponsor-items/")[1]?.split("?")[0];
+      if (path) {
+        await supabase.storage.from("sponsor-items").remove([path]);
+      }
+    }
+    // 商品本体を削除（関連テーブルは ON DELETE CASCADE で自動削除）
+    const { error } = await supabase.from("sponsor_items").delete().eq("id", id);
+    if (!error) await fetchSponsorItems();
+    return { error };
+  };
+
   // 重み付き抽選の実行（応募抽選用）
   const drawLotteryWinner = async (itemId) => {
     if (!user) return { error: "未ログイン" };
@@ -177,6 +193,33 @@ export const useAdmin = () => {
   };
 
   // ========================================
+  // 商品画像アップロード
+  // ========================================
+  const uploadSponsorImage = async (imageUri, itemId) => {
+    if (!user) return { error: "未ログイン", url: null };
+    try {
+      const response = await fetch(imageUri);
+      const arrayBuffer = await response.arrayBuffer();
+      const filePath = `${itemId}/${Date.now()}.jpg`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("sponsor-items")
+        .upload(filePath, arrayBuffer, { upsert: true, contentType: "image/jpeg" });
+
+      if (uploadError) return { error: uploadError, url: null };
+
+      const { data: urlData } = supabase.storage
+        .from("sponsor-items")
+        .getPublicUrl(filePath);
+
+      const url = urlData.publicUrl + "?t=" + Date.now();
+      return { error: null, url };
+    } catch (e) {
+      return { error: e, url: null };
+    }
+  };
+
+  // ========================================
   // 交換管理（フルフィルメント）
   // ========================================
   const [pendingExchanges, setPendingExchanges] = useState([]);
@@ -188,8 +231,8 @@ export const useAdmin = () => {
     setExchangesLoading(true);
     const { data } = await supabase
       .from("point_exchanges")
-      .select("*, profiles:user_id(name, email), sponsor_items:item_id(name, icon, delivery_type)")
-      .eq("type", "exchange")
+      .select("*, profiles:user_id(name, email), sponsor_items:item_id(name, icon, delivery_type, image_url)")
+      .in("type", ["exchange", "instant_lottery_win"])
       .in("status", ["pending", "shipped"])
       .order("created_at", { ascending: true });
     setPendingExchanges(data || []);
@@ -200,21 +243,22 @@ export const useAdmin = () => {
     if (!user) return;
     const { data } = await supabase
       .from("point_exchanges")
-      .select("*, profiles:user_id(name, email), sponsor_items:item_id(name, icon, delivery_type)")
-      .eq("type", "exchange")
+      .select("*, profiles:user_id(name, email), sponsor_items:item_id(name, icon, delivery_type, image_url)")
+      .in("type", ["exchange", "instant_lottery_win"])
       .in("status", ["completed", "cancelled"])
       .order("fulfilled_at", { ascending: false })
       .limit(50);
     setCompletedExchanges(data || []);
   }, [user]);
 
-  const fulfillExchange = async (exchangeId, newStatus, adminNote = "") => {
+  const fulfillExchange = async (exchangeId, newStatus, adminNote = "", giftCode = "") => {
     if (!user) return { error: "未ログイン" };
     const updates = {
       status: newStatus,
       admin_note: adminNote || null,
       fulfilled_at: new Date().toISOString(),
       fulfilled_by: user.id,
+      ...(giftCode ? { gift_code: giftCode } : {}),
     };
     const { error } = await supabase
       .from("point_exchanges")
@@ -290,7 +334,7 @@ export const useAdmin = () => {
   return {
     isAdmin, applications, history, loading, approveApplication, rejectApplication, refetch: fetchApplications,
     sponsorItems, sponsorLoading, fetchSponsorItems,
-    createSponsorItem, updateSponsorItem, toggleSponsorItemActive, drawLotteryWinner,
+    createSponsorItem, updateSponsorItem, toggleSponsorItemActive, deleteSponsorItem, drawLotteryWinner, uploadSponsorImage,
     pendingExchanges, completedExchanges, exchangesLoading,
     fetchPendingExchanges, fetchCompletedExchanges, fulfillExchange,
     instantPrizesList, instantPrizesLoading, fetchInstantPrizes,

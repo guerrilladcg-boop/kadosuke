@@ -13,7 +13,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kadosuke.app"
+      "bundleIdentifier": "com.kadosuke.app",
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["twitter"],
+        "UIBackgroundModes": ["remote-notification"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,6 +33,13 @@
       "expo-secure-store",
       "expo-font",
       "expo-image-picker",
+      [
+        "expo-notifications",
+        {
+          "color": "#E85D26",
+          "defaultChannel": "default"
+        }
+      ],
       [
         "react-native-google-mobile-ads",
         {
