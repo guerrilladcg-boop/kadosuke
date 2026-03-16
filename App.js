@@ -1,7 +1,8 @@
-﻿import React, { useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+﻿import React, { useEffect, useRef } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import HomeScreen    from "./src/screens/HomeScreen";
 import SearchScreen  from "./src/screens/SearchScreen";
 import SponsorScreen from "./src/screens/SponsorScreen";
@@ -20,6 +21,7 @@ import { useLoginBonus } from "./src/hooks/useLoginBonus";
 import { useMissions } from "./src/hooks/useMissions";
 import { useLevelStore } from "./src/store/useLevelStore";
 import { useNotifications } from "./src/hooks/useNotifications";
+import { hapticSelection, hapticSuccess } from "./src/utils/haptics";
 const TABS = [
   { key: "home",    label: "ホーム",     icon: "home",   Screen: HomeScreen },
   { key: "search",  label: "検索",       icon: "search", Screen: SearchScreen },
@@ -116,16 +118,23 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={styles.container} edges={["top"]}>
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>カドスケ！</Text>
+          <View style={styles.headerLeft}>
+            <Text style={styles.headerTitle}>カドスケ！</Text>
+            {isPremium && (
+              <View style={styles.premiumActiveBadge}>
+                <Ionicons name="star" size={10} color="#FFD700" />
+              </View>
+            )}
+          </View>
           <View style={styles.headerRight}>
             {!isPremium && (
               <TouchableOpacity style={styles.premiumBtn} onPress={() => setShowPremium(true)}>
-                <Ionicons name="star" size={16} color="#FFD700" />
-                <Text style={styles.premiumBtnText}>広告非表示</Text>
+                <Ionicons name="star" size={14} color="#FFD700" />
+                <Text style={styles.premiumBtnText}>Premium</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.notifBtn} onPress={() => setShowNotifications(true)}>
-              <Ionicons name="notifications-outline" size={24} color={C.text} />
+              <Ionicons name="notifications-outline" size={22} color={C.text} />
               {unreadCount > 0 && (
                 <View style={styles.notifBadge}>
                   <Text style={styles.notifBadgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
@@ -140,23 +149,28 @@ export default function App() {
         {/* バナー広告（タブの上に配置）+ 広告非表示導線 */}
         <BannerAd isPremium={isPremium} onPremiumPress={() => setShowPremium(true)} />
         <SafeAreaView edges={["bottom"]} style={styles.bottomTab}>
-          {TABS.map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              style={styles.tabItem}
-              onPress={() => setActiveTab(tab.key)}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={activeTab === tab.key ? tab.icon : `${tab.icon}-outline`}
-                size={24}
-                color={activeTab === tab.key ? C.primary : C.textSub}
-              />
-              <Text style={[styles.tabLabel, { color: activeTab === tab.key ? C.primary : C.textSub }]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={styles.tabItem}
+                onPress={() => { hapticSelection(); setActiveTab(tab.key); }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.tabIconWrap, isActive && styles.tabIconWrapActive]}>
+                  <Ionicons
+                    name={isActive ? tab.icon : `${tab.icon}-outline`}
+                    size={22}
+                    color={isActive ? C.primary : C.textSub}
+                  />
+                </View>
+                <Text style={[styles.tabLabel, isActive && { color: C.primary, fontWeight: "700" }]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </SafeAreaView>
         {/* プレミアム購入モーダル */}
         <PremiumModal
@@ -208,15 +222,41 @@ export default function App() {
 }
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.card },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border },
-  headerTitle: { fontSize: 22, fontWeight: "bold", color: C.primary },
+  header: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 16, paddingVertical: 10, backgroundColor: C.card,
+    borderBottomWidth: 1, borderBottomColor: C.border,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 2,
+  },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  headerTitle: { fontSize: 22, fontWeight: "900", color: C.primary, letterSpacing: 1 },
+  premiumActiveBadge: {
+    width: 18, height: 18, borderRadius: 9, backgroundColor: "#FFF8E1",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "#FFD700",
+  },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  premiumBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#FFF8E1", borderRadius: 16, paddingHorizontal: 10, paddingVertical: 6 },
-  premiumBtnText: { fontSize: 11, fontWeight: "bold", color: "#D4A017" },
+  premiumBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: "#1A1A2E", borderRadius: 16,
+    paddingHorizontal: 12, paddingVertical: 6,
+  },
+  premiumBtnText: { fontSize: 11, fontWeight: "bold", color: "#FFD700" },
   notifBtn: { padding: 4, position: "relative" },
-  notifBadge: { position: "absolute", top: -2, right: -4, backgroundColor: C.danger, borderRadius: 9, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
-  notifBadgeText: { color: "#fff", fontSize: 10, fontWeight: "bold" },
-  bottomTab: { flexDirection: "row", backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.border },
-  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 8, gap: 2 },
-  tabLabel: { fontSize: 11, fontWeight: "600" },
+  notifBadge: {
+    position: "absolute", top: -2, right: -4, backgroundColor: C.danger,
+    borderRadius: 9, minWidth: 18, height: 18,
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 4,
+    borderWidth: 1.5, borderColor: C.card,
+  },
+  notifBadgeText: { color: "#fff", fontSize: 9, fontWeight: "bold" },
+  bottomTab: {
+    flexDirection: "row", backgroundColor: C.card,
+    borderTopWidth: 1, borderTopColor: C.border,
+    shadowColor: "#000", shadowOffset: { width: 0, height: -1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 4,
+  },
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, gap: 1 },
+  tabIconWrap: { paddingHorizontal: 16, paddingVertical: 2, borderRadius: 12 },
+  tabIconWrapActive: { backgroundColor: C.primary + "12" },
+  tabLabel: { fontSize: 10, fontWeight: "600", color: C.textSub },
 });

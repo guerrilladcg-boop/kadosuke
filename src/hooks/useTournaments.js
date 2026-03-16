@@ -4,6 +4,7 @@ import { useAuthStore } from "../store/useAuthStore";
 import { addExperience } from "../store/useLevelStore";
 import { EXP_REWARDS } from "../constants/levels";
 import { scheduleReminder, cancelReminder } from "../utils/notificationScheduler";
+import { hapticLight, hapticSuccess } from "../utils/haptics";
 export const useTournaments = () => {
   const [tournaments, setTournaments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -91,6 +92,7 @@ export const useTournaments = () => {
   }, [user]);
   const toggleFavorite = async (tournament) => {
     if (!user) return;
+    hapticLight();
     if (tournament.isFavorite) {
       await supabase.from("favorites")
         .delete()
@@ -106,6 +108,7 @@ export const useTournaments = () => {
   };
   const toggleEntry = async (tournament) => {
     if (!user) return;
+    hapticSuccess();
     if (tournament.isEntered) {
       await supabase.from("entries")
         .delete()

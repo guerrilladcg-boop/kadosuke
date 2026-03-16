@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, RefreshControl, Share } from "react-native";
+import {
+  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  ActivityIndicator, Alert, RefreshControl, Share, Animated, LayoutAnimation, Platform, UIManager,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 // react-native-view-shot はネイティブモジュールのため Expo Go では使えない
@@ -17,6 +20,12 @@ import { useOrganizerFollows } from "../hooks/useOrganizerFollows";
 import { shareTournamentResult } from "../utils/share";
 import AddResultModal from "../components/AddResultModal";
 import TournamentDetailModal from "../components/TournamentDetailModal";
+import { hapticLight, hapticSelection } from "../utils/haptics";
+
+// Android で LayoutAnimation を有効化
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const getMedal = (rank) => {
   if (rank === 1) return "🥇";
@@ -24,6 +33,47 @@ const getMedal = (rank) => {
   if (rank === 3) return "🥉";
   return "🏅";
 };
+
+// スケルトンローディングコンポーネント
+function SkeletonCard() {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  return (
+    <Animated.View style={[styles.card, { opacity }]}>
+      <View style={styles.resultRow}>
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <View style={styles.skelLine40} />
+            <View style={styles.skelLine60} />
+          </View>
+          <View style={[styles.skelLine, { width: "70%", marginTop: 8 }]} />
+        </View>
+        <View style={styles.skelBadge} />
+      </View>
+    </Animated.View>
+  );
+}
+
+function SkeletonLoading() {
+  return (
+    <View style={{ paddingTop: 8 }}>
+      <SkeletonCard />
+      <SkeletonCard />
+      <SkeletonCard />
+    </View>
+  );
+}
 
 export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState("results");
@@ -73,6 +123,16 @@ export default function HomeScreen() {
   const silver = filteredResults.filter((r) => r.rank === 2).length;
   const bronze = filteredResults.filter((r) => r.rank === 3).length;
 
+  // 勝率・統計データ
+  const stats = useMemo(() => {
+    const totalWins = filteredResults.reduce((s, r) => s + (r.wins || 0), 0);
+    const totalLosses = filteredResults.reduce((s, r) => s + (r.losses || 0), 0);
+    const totalDraws = filteredResults.reduce((s, r) => s + (r.draws || 0), 0);
+    const totalGames = totalWins + totalLosses + totalDraws;
+    const winRate = totalGames > 0 ? ((totalWins / totalGames) * 100).toFixed(1) : null;
+    return { totalWins, totalLosses, totalDraws, totalGames, winRate, count: filteredResults.length };
+  }, [filteredResults]);
+
   const handleDelete = (item) => {
     Alert.alert(
       "戦績を削除",
@@ -95,12 +155,20 @@ export default function HomeScreen() {
 
   const hasWL = (item) => (item.wins || 0) > 0 || (item.losses || 0) > 0 || (item.draws || 0) > 0;
 
+  const handleExpand = useCallback((id) => {
+    hapticLight();
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedId((prev) => (prev === id ? null : id));
+  }, []);
+
   // ネイティブシェアシートでサマリーをシェア
   const handleShareSummary = async () => {
     try {
+      const winText = stats.winRate ? `勝率 ${stats.winRate}%` : "";
       const text =
         `🏆 TCG大会の戦績まとめ！\n` +
         `🥇${gold} 🥈${silver} 🥉${bronze}\n` +
+        (winText ? `📊 ${winText} (${stats.totalGames}戦)\n` : "") +
         `カドスケ！で記録してます📊\n\n` +
         `#カドスケ #TCG #カードゲーム`;
       await Share.share({ message: text });
@@ -111,16 +179,20 @@ export default function HomeScreen() {
     }
   };
 
-  const renderResultCard = (item) => {
+  const renderResultCard = useCallback(({ item }) => {
     const isExpanded = expandedId === item.id;
     return (
       <TouchableOpacity
-        key={item.id}
-        style={styles.card}
-        onPress={() => setExpandedId(isExpanded ? null : item.id)}
+        style={[styles.card, isExpanded && styles.cardExpanded]}
+        onPress={() => handleExpand(item.id)}
         onLongPress={() => handleDelete(item)}
         activeOpacity={0.7}
       >
+        {/* ゲームカラーバー */}
+        {item.game_color && (
+          <View style={[styles.cardColorBar, { backgroundColor: item.game_color }]} />
+        )}
+
         {/* メイン情報 */}
         <View style={styles.resultRow}>
           <View style={{ flex: 1 }}>
@@ -137,8 +209,10 @@ export default function HomeScreen() {
             ) : null}
           </View>
           <View style={styles.resultRight}>
-            <View style={styles.rankBadge}>
-              <Text style={styles.rankText}>{getMedal(item.rank)} {item.rank}位</Text>
+            <View style={[styles.rankBadge, item.rank <= 3 && styles.rankBadgeTop]}>
+              <Text style={[styles.rankText, item.rank <= 3 && styles.rankTextTop]}>
+                {getMedal(item.rank)} {item.rank}位
+              </Text>
             </View>
             {hasWL(item) && (
               <Text style={styles.wlCompact}>
@@ -153,15 +227,15 @@ export default function HomeScreen() {
           <View style={styles.expandedArea}>
             {hasWL(item) && (
               <View style={styles.expandedWL}>
-                <View style={[styles.wlItem, { backgroundColor: "#DCFCE7" }]}>
+                <View style={[styles.wlItem, { backgroundColor: C.successBg }]}>
                   <Text style={[styles.wlLabel, { color: C.success }]}>勝ち</Text>
                   <Text style={[styles.wlValue, { color: C.success }]}>{item.wins || 0}</Text>
                 </View>
-                <View style={[styles.wlItem, { backgroundColor: "#FEE2E2" }]}>
+                <View style={[styles.wlItem, { backgroundColor: C.dangerBg }]}>
                   <Text style={[styles.wlLabel, { color: C.danger }]}>負け</Text>
                   <Text style={[styles.wlValue, { color: C.danger }]}>{item.losses || 0}</Text>
                 </View>
-                <View style={[styles.wlItem, { backgroundColor: "#FEF3C7" }]}>
+                <View style={[styles.wlItem, { backgroundColor: C.warningBg }]}>
                   <Text style={[styles.wlLabel, { color: C.warning }]}>引分</Text>
                   <Text style={[styles.wlValue, { color: C.warning }]}>{item.draws || 0}</Text>
                 </View>
@@ -204,7 +278,132 @@ export default function HomeScreen() {
         </View>
       </TouchableOpacity>
     );
-  };
+  }, [expandedId, handleExpand]);
+
+  // サマリーヘッダー（FlatListのListHeaderComponent）
+  const ResultsHeader = useMemo(() => (
+    <>
+      <ViewShot
+        ref={summaryRef}
+        options={{ format: "png", quality: 0.95 }}
+        style={styles.viewShotContainer}
+      >
+        <View style={[styles.summaryCard, showGameFilter && styles.cardDropdownOpen]}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>戦績サマリー</Text>
+            <TouchableOpacity
+              style={styles.filterDropdown}
+              onPress={() => setShowGameFilter(!showGameFilter)}
+            >
+              <Text style={styles.filterText}>{selectedGame || "すべて"}</Text>
+              <Ionicons name={showGameFilter ? "chevron-up" : "chevron-down"} size={14} color={C.textSub} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.medalRow}>
+            {[{ icon: "🥇", count: gold }, { icon: "🥈", count: silver }, { icon: "🥉", count: bronze }].map((m, i) => (
+              <View key={i} style={styles.medalItem}>
+                <Text style={styles.medalIcon}>{m.icon}</Text>
+                <Text style={styles.medalCount}>{m.count}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* 勝率・統計バー */}
+          {stats.totalGames > 0 && (
+            <View style={styles.statsBar}>
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{stats.count}</Text>
+                <Text style={styles.statLabel}>大会数</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={[styles.statValue, { color: C.success }]}>{stats.winRate}%</Text>
+                <Text style={styles.statLabel}>勝率</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Text style={styles.statValue}>{stats.totalGames}</Text>
+                <Text style={styles.statLabel}>総対戦数</Text>
+              </View>
+            </View>
+          )}
+
+          {/* 勝敗プログレスバー */}
+          {stats.totalGames > 0 && (
+            <View style={styles.progressContainer}>
+              <View style={styles.progressBar}>
+                <View style={[styles.progressWin, { flex: stats.totalWins || 0.01 }]} />
+                {stats.totalDraws > 0 && (
+                  <View style={[styles.progressDraw, { flex: stats.totalDraws }]} />
+                )}
+                <View style={[styles.progressLoss, { flex: stats.totalLosses || 0.01 }]} />
+              </View>
+              <View style={styles.progressLegend}>
+                <Text style={[styles.progressLegendText, { color: C.success }]}>
+                  {stats.totalWins}W
+                </Text>
+                {stats.totalDraws > 0 && (
+                  <Text style={[styles.progressLegendText, { color: C.warning }]}>
+                    {stats.totalDraws}D
+                  </Text>
+                )}
+                <Text style={[styles.progressLegendText, { color: C.danger }]}>
+                  {stats.totalLosses}L
+                </Text>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.captureFooter}>
+            <Text style={styles.captureFooterText}>📊 カドスケ！で戦績を記録中</Text>
+            <Text style={styles.captureHashtags}>#カドスケ #TCG #カードゲーム</Text>
+          </View>
+
+          {showGameFilter && (
+            <>
+              <TouchableOpacity
+                style={styles.filterBackdrop}
+                activeOpacity={1}
+                onPress={() => setShowGameFilter(false)}
+              />
+              <View style={styles.filterMenu}>
+                <TouchableOpacity
+                  style={[styles.filterMenuItem, !selectedGame && styles.filterMenuItemActive]}
+                  onPress={() => { setSelectedGame(null); setShowGameFilter(false); }}
+                >
+                  <Text style={[styles.filterMenuText, !selectedGame && { color: C.primary, fontWeight: "bold" }]}>すべて</Text>
+                </TouchableOpacity>
+                {uniqueGames.map((g) => (
+                  <TouchableOpacity
+                    key={g}
+                    style={[styles.filterMenuItem, selectedGame === g && styles.filterMenuItemActive]}
+                    onPress={() => { setSelectedGame(g); setShowGameFilter(false); }}
+                  >
+                    <Text style={[styles.filterMenuText, selectedGame === g && { color: C.primary, fontWeight: "bold" }]}>{g}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+        </View>
+      </ViewShot>
+
+      <TouchableOpacity style={styles.shareBtn} onPress={handleShareSummary}>
+        <Ionicons name="share-social-outline" size={14} color="#fff" />
+        <Text style={styles.shareBtnText}>シェア</Text>
+      </TouchableOpacity>
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>直近の戦績</Text>
+        <TouchableOpacity onPress={() => setShowAdd(true)}>
+          <Text style={[styles.cardSub, { color: C.primary }]}>+ 手動追加</Text>
+        </TouchableOpacity>
+      </View>
+      {results.length > 0 && (
+        <Text style={styles.hint}>タップで詳細 / 長押しで削除</Text>
+      )}
+    </>
+  ), [gold, silver, bronze, stats, showGameFilter, selectedGame, uniqueGames, results.length]);
 
   return (
     <>
@@ -224,155 +423,99 @@ export default function HomeScreen() {
       </View>
 
       {activeTab === "results" ? (
-        <ScrollView
-          style={styles.screen}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
-        >
-          <ViewShot
-            ref={summaryRef}
-            options={{ format: "png", quality: 0.95 }}
-            style={styles.viewShotContainer}
-          >
-            <View style={[styles.summaryCard, showGameFilter && styles.cardDropdownOpen]}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>戦績サマリー</Text>
-                <TouchableOpacity
-                  style={styles.filterDropdown}
-                  onPress={() => setShowGameFilter(!showGameFilter)}
-                >
-                  <Text style={styles.filterText}>{selectedGame || "すべて"}</Text>
-                  <Ionicons name={showGameFilter ? "chevron-up" : "chevron-down"} size={14} color={C.textSub} />
+        loading ? (
+          <View style={styles.screen}>
+            <SkeletonLoading />
+          </View>
+        ) : results.length === 0 ? (
+          <FlatList
+            style={styles.screen}
+            data={[]}
+            renderItem={null}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+            ListHeaderComponent={ResultsHeader}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Ionicons name="trophy-outline" size={48} color={C.border} />
+                <Text style={styles.emptyText}>まだ戦績がありません</Text>
+                <Text style={styles.emptySubText}>大会に参加したら記録してみましょう</Text>
+                <TouchableOpacity style={styles.emptyCta} onPress={() => setShowAdd(true)}>
+                  <Ionicons name="add-circle-outline" size={18} color="#fff" />
+                  <Text style={styles.emptyCtaText}>戦績を追加する</Text>
                 </TouchableOpacity>
               </View>
-              <View style={styles.medalRow}>
-                {[{ icon: "🥇", count: gold }, { icon: "🥈", count: silver }, { icon: "🥉", count: bronze }].map((m, i) => (
-                  <View key={i} style={styles.medalItem}>
-                    <Text style={styles.medalIcon}>{m.icon}</Text>
-                    <Text style={styles.medalCount}>{m.count}</Text>
-                  </View>
-                ))}
-              </View>
-
-              <View style={styles.captureFooter}>
-                <Text style={styles.captureFooterText}>📊 カドスケ！で戦績を記録中</Text>
-                <Text style={styles.captureHashtags}>#カドスケ #TCG #カードゲーム</Text>
-              </View>
-
-              {showGameFilter && (
-                <>
-                  <TouchableOpacity
-                    style={styles.filterBackdrop}
-                    activeOpacity={1}
-                    onPress={() => setShowGameFilter(false)}
-                  />
-                  <View style={styles.filterMenu}>
-                    <TouchableOpacity
-                      style={[styles.filterMenuItem, !selectedGame && styles.filterMenuItemActive]}
-                      onPress={() => { setSelectedGame(null); setShowGameFilter(false); }}
-                    >
-                      <Text style={[styles.filterMenuText, !selectedGame && { color: C.primary, fontWeight: "bold" }]}>すべて</Text>
-                    </TouchableOpacity>
-                    {uniqueGames.map((g) => (
-                      <TouchableOpacity
-                        key={g}
-                        style={[styles.filterMenuItem, selectedGame === g && styles.filterMenuItemActive]}
-                        onPress={() => { setSelectedGame(g); setShowGameFilter(false); }}
-                      >
-                        <Text style={[styles.filterMenuText, selectedGame === g && { color: C.primary, fontWeight: "bold" }]}>{g}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </>
-              )}
-            </View>
-          </ViewShot>
-
-          <TouchableOpacity style={styles.shareBtn} onPress={handleShareSummary}>
-            <Ionicons name="share-social-outline" size={14} color="#fff" />
-            <Text style={styles.shareBtnText}>シェア</Text>
-          </TouchableOpacity>
-
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>直近の戦績</Text>
-            <TouchableOpacity onPress={() => setShowAdd(true)}>
-              <Text style={[styles.cardSub, { color: C.primary }]}>+ 手動追加</Text>
-            </TouchableOpacity>
-          </View>
-          {loading ? (
-            <ActivityIndicator color={C.primary} style={{ marginTop: 40 }} />
-          ) : results.length === 0 ? (
-            <View style={styles.empty}>
-              <Ionicons name="trophy-outline" size={48} color={C.border} />
-              <Text style={styles.emptyText}>まだ戦績がありません</Text>
-              <Text style={styles.emptySubText}>大会に参加したら記録してみましょう</Text>
-              <TouchableOpacity style={styles.emptyCta} onPress={() => setShowAdd(true)}>
-                <Ionicons name="add-circle-outline" size={18} color="#fff" />
-                <Text style={styles.emptyCtaText}>戦績を追加する</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              <Text style={styles.hint}>タップで詳細 / 長押しで削除</Text>
-              {results.map(renderResultCard)}
-            </>
-          )}
-          <View style={{ height: 20 }} />
-        </ScrollView>
+            }
+            ListFooterComponent={<View style={{ height: 20 }} />}
+          />
+        ) : (
+          <FlatList
+            style={styles.screen}
+            data={filteredResults}
+            renderItem={renderResultCard}
+            keyExtractor={(item) => item.id}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
+            ListHeaderComponent={ResultsHeader}
+            ListFooterComponent={<View style={{ height: 20 }} />}
+            extraData={expandedId}
+          />
+        )
       ) : (
-        <ScrollView
+        <FlatList
           style={styles.screen}
+          data={followLoading || tourLoading ? [] : tournaments}
+          renderItem={({ item: t }) => (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => setSelectedTournament(t)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.followCardTop}>
+                <View style={styles.resultMeta}>
+                  <Text style={[styles.gameTag, { color: t.game_color }]}>{t.game}</Text>
+                  <Text style={styles.dateText}>
+                    {new Date(t.date).toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => handleToggleFavorite(t)}>
+                  <Ionicons name={t.isFavorite ? "heart" : "heart-outline"} size={20} color={t.isFavorite ? "#EF4444" : C.textSub} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.tournamentName}>{t.name}</Text>
+              <View style={styles.organizerRow}>
+                <Ionicons name="person-outline" size={13} color={C.textSub} />
+                <Text style={styles.organizerText}>{t.organizer}</Text>
+              </View>
+              {t.location ? <Text style={styles.locationText}>{t.location}</Text> : null}
+              {t.isEntered && (
+                <View style={styles.enteredBadge}>
+                  <Text style={styles.enteredBadgeText}>エントリー済</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
+          keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
-        >
-          {followLoading || tourLoading ? (
-            <ActivityIndicator color={C.primary} style={{ marginTop: 40 }} />
-          ) : followedIdsArray.length === 0 ? (
-            <View style={styles.empty}>
-              <Ionicons name="people-outline" size={48} color={C.border} />
-              <Text style={styles.emptyText}>フォロー中の主催者がいません</Text>
-              <Text style={styles.emptySubText}>検索画面から大会詳細を開いて{"\n"}主催者をフォローしましょう</Text>
-            </View>
-          ) : tournaments.length === 0 ? (
-            <View style={styles.empty}>
-              <Ionicons name="calendar-outline" size={48} color={C.border} />
-              <Text style={styles.emptyText}>フォロー中の主催者の大会はありません</Text>
-            </View>
-          ) : (
-            tournaments.map((t) => (
-              <TouchableOpacity
-                key={t.id}
-                style={styles.card}
-                onPress={() => setSelectedTournament(t)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.followCardTop}>
-                  <View style={styles.resultMeta}>
-                    <Text style={[styles.gameTag, { color: t.game_color }]}>{t.game}</Text>
-                    <Text style={styles.dateText}>
-                      {new Date(t.date).toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={() => handleToggleFavorite(t)}>
-                    <Ionicons name={t.isFavorite ? "heart" : "heart-outline"} size={20} color={t.isFavorite ? "#EF4444" : C.textSub} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.tournamentName}>{t.name}</Text>
-                <View style={styles.organizerRow}>
-                  <Ionicons name="person-outline" size={13} color={C.textSub} />
-                  <Text style={styles.organizerText}>{t.organizer}</Text>
-                </View>
-                {t.location ? <Text style={styles.locationText}>{t.location}</Text> : null}
-                {t.isEntered && (
-                  <View style={styles.enteredBadge}>
-                    <Text style={styles.enteredBadgeText}>エントリー済</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            ))
-          )}
-          <View style={{ height: 20 }} />
-        </ScrollView>
+          ListEmptyComponent={
+            followLoading || tourLoading ? (
+              <SkeletonLoading />
+            ) : followedIdsArray.length === 0 ? (
+              <View style={styles.empty}>
+                <Ionicons name="people-outline" size={48} color={C.border} />
+                <Text style={styles.emptyText}>フォロー中の主催者がいません</Text>
+                <Text style={styles.emptySubText}>検索画面から大会詳細を開いて{"\n"}主催者をフォローしましょう</Text>
+              </View>
+            ) : (
+              <View style={styles.empty}>
+                <Ionicons name="calendar-outline" size={48} color={C.border} />
+                <Text style={styles.emptyText}>フォロー中の主催者の大会はありません</Text>
+              </View>
+            )
+          }
+          ListFooterComponent={<View style={{ height: 20 }} />}
+        />
       )}
 
       <AddResultModal visible={showAdd} onClose={() => setShowAdd(false)} />
@@ -396,7 +539,18 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 14, fontWeight: "600", color: C.textSub },
   tabTextActive: { color: C.primary },
   screen: { flex: 1, backgroundColor: C.bg, paddingHorizontal: 16, paddingTop: 12 },
-  card: { backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10, elevation: 2 },
+  card: {
+    backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10,
+    elevation: 2, overflow: "hidden",
+    shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4,
+  },
+  cardExpanded: {
+    borderWidth: 1, borderColor: C.primary + "30",
+    shadowOpacity: 0.12, elevation: 4,
+  },
+  cardColorBar: {
+    position: "absolute", top: 0, left: 0, width: 4, height: "100%", borderTopLeftRadius: 12, borderBottomLeftRadius: 12,
+  },
   viewShotContainer: { backgroundColor: "#fff", borderRadius: 12, overflow: "hidden", marginBottom: 10 },
   summaryCard: { backgroundColor: "#fff", borderRadius: 12, padding: 16 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -406,6 +560,29 @@ const styles = StyleSheet.create({
   medalItem: { alignItems: "center" },
   medalIcon: { fontSize: 32 },
   medalCount: { fontSize: 20, fontWeight: "bold", color: C.text, marginTop: 4 },
+
+  // 統計バー
+  statsBar: {
+    flexDirection: "row", backgroundColor: C.bg, borderRadius: 10, padding: 12,
+    marginTop: 14, marginBottom: 4,
+  },
+  statItem: { flex: 1, alignItems: "center" },
+  statValue: { fontSize: 18, fontWeight: "bold", color: C.text },
+  statLabel: { fontSize: 10, color: C.textSub, marginTop: 2 },
+  statDivider: { width: 1, backgroundColor: C.border, marginVertical: 2 },
+
+  // プログレスバー（勝敗）
+  progressContainer: { marginTop: 8, paddingHorizontal: 4 },
+  progressBar: {
+    flexDirection: "row", height: 6, borderRadius: 3, overflow: "hidden",
+    backgroundColor: C.bg,
+  },
+  progressWin: { backgroundColor: C.success, borderRadius: 3 },
+  progressDraw: { backgroundColor: C.warning },
+  progressLoss: { backgroundColor: C.danger, borderRadius: 3 },
+  progressLegend: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
+  progressLegendText: { fontSize: 11, fontWeight: "bold" },
+
   filterDropdown: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: C.bg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   filterText: { fontSize: 13, color: C.text, fontWeight: "600" },
   cardDropdownOpen: { overflow: "visible", zIndex: 10 },
@@ -429,7 +606,9 @@ const styles = StyleSheet.create({
   tournamentName: { fontSize: 15, fontWeight: "bold", color: C.text },
   resultRight: { alignItems: "flex-end", marginLeft: 8 },
   rankBadge: { backgroundColor: C.bg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  rankBadgeTop: { backgroundColor: "#FFF8E1", borderWidth: 1, borderColor: "#FFE082" },
   rankText: { fontSize: 13, fontWeight: "bold", color: C.text },
+  rankTextTop: { color: "#B8860B" },
   wlCompact: { fontSize: 11, color: C.textSub, marginTop: 4 },
   deckRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 3 },
   deckIcon: { fontSize: 12 },
@@ -456,6 +635,12 @@ const styles = StyleSheet.create({
   organizerRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
   organizerText: { fontSize: 13, color: C.textSub },
   locationText: { fontSize: 12, color: C.textSub, marginTop: 2 },
-  enteredBadge: { backgroundColor: "#DCFCE7", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, alignSelf: "flex-start", marginTop: 6 },
-  enteredBadgeText: { fontSize: 11, color: "#16A34A", fontWeight: "bold" },
+  enteredBadge: { backgroundColor: C.successBg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, alignSelf: "flex-start", marginTop: 6 },
+  enteredBadgeText: { fontSize: 11, color: C.success, fontWeight: "bold" },
+
+  // スケルトン
+  skelLine: { height: 12, backgroundColor: C.border, borderRadius: 6 },
+  skelLine40: { height: 10, width: 40, backgroundColor: C.border, borderRadius: 5 },
+  skelLine60: { height: 10, width: 60, backgroundColor: C.border, borderRadius: 5 },
+  skelBadge: { width: 56, height: 32, backgroundColor: C.border, borderRadius: 8 },
 });
