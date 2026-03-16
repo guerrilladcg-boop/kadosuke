@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Switch, StyleSheet, Alert, Modal, ActivityIndicator, RefreshControl } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,6 +11,7 @@ import { useAdmin } from "../hooks/useAdmin";
 import { usePremium } from "../hooks/usePremium";
 import { useProfile } from "../hooks/useProfile";
 import { useSponsorItems } from "../hooks/useSponsorItems";
+import { useLeagues } from "../hooks/useLeagues";
 import CreateTournamentModal from "../components/CreateTournamentModal";
 import AdminScreen from "./AdminScreen";
 import OrganizerApplyModal from "../components/OrganizerApplyModal";
@@ -58,14 +59,48 @@ export default function MyPageScreen() {
   const [showAddressEdit, setShowAddressEdit] = useState(false);
   const [addressForm, setAddressForm] = useState({});
 
+  // サブページモーダル
+  const [showExchangeHistory, setShowExchangeHistory] = useState(false);
+  const [showOrganizerPage, setShowOrganizerPage] = useState(false);
+  const [selectedExchange, setSelectedExchange] = useState(null);
+
   const { isOrganizer, organizerStatus, myTournaments, applyOrganizer, cancelApplication, deleteTournament, importTournamentResults } = useOrganizer();
   const { isAdmin } = useAdmin();
   const { isPremium, premiumType, purchasePremium, cancelPremium } = usePremium();
   const { myExchanges } = useSponsorItems();
+  const { leagues, fetchMyLeagues } = useLeagues();
   const insets = useSafeAreaInsets();
 
   const displayName = profile?.name || user?.email || "プレイヤー";
   const initial = displayName.charAt(0).toUpperCase();
+
+  // 主催大会を分類
+  const categorizedTournaments = useMemo(() => {
+    const now = new Date();
+    const active = []; // 現在開催中（日時が過ぎているが status=upcoming）
+    const accepting = []; // エントリー受付中（日時が未来）
+    const completed = []; // 終了済み
+
+    myTournaments.forEach((t) => {
+      if (t.status === "completed") {
+        completed.push(t);
+      } else {
+        const tDate = new Date(t.date);
+        if (tDate <= now) {
+          active.push(t);
+        } else {
+          accepting.push(t);
+        }
+      }
+    });
+
+    return { active, accepting, completed };
+  }, [myTournaments]);
+
+  // アクティブなリーグ
+  const activeLeagues = useMemo(() => {
+    return leagues.filter((l) => l.status === "active");
+  }, [leagues]);
 
   // --- ハンドラ ---
   const handleSignOut = () => {
@@ -219,7 +254,7 @@ export default function MyPageScreen() {
       return <View style={styles.organizerBadge}><Text style={styles.organizerBadgeText}>主催者</Text></View>;
     }
     if (organizerStatus === "pending") {
-      return <View style={[styles.organizerBadge, { backgroundColor: "#FEF9C3" }]}><Text style={[styles.organizerBadgeText, { color: C.pending }]}>審査中</Text></View>;
+      return <View style={[styles.organizerBadge, { backgroundColor: "#FEF9C3" }]}><Text style={[styles.organizerBadgeText, { color: C.warning }]}>審査中</Text></View>;
     }
     return null;
   };
@@ -236,7 +271,12 @@ export default function MyPageScreen() {
     if (error) throw error;
   };
 
-  // --- 主催者セクション ---
+  const handleCopyCode = async (code) => {
+    await Clipboard.setStringAsync(code);
+    Alert.alert("コピーしました", "ギフトコードをクリップボードにコピーしました");
+  };
+
+  // --- 主催者セクション（メイン画面用の簡略版） ---
   const renderOrganizerSection = () => {
     if (isOrganizer) {
       return (
@@ -269,39 +309,17 @@ export default function MyPageScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>主催している大会</Text>
-            <TouchableOpacity onPress={() => setShowCreateTournament(true)}>
-              <Text style={styles.addBtn}>+ 新規投稿</Text>
-            </TouchableOpacity>
-          </View>
-          {myTournaments.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>まだ大会を投稿していません</Text>
-              <TouchableOpacity style={styles.createBtn} onPress={() => setShowCreateTournament(true)}>
-                <Text style={styles.createBtnText}>大会を投稿する</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            myTournaments.map((t) => (
-              <View key={t.id} style={styles.tournamentItem}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.gameTag, { color: t.game_color }]}>{t.game}</Text>
-                  <Text style={styles.tournamentName}>{t.name}</Text>
-                  <Text style={styles.tournamentDate}>
-                    {new Date(t.date).toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => handleCSVImportForTournament(t)} style={styles.csvImportBtn}>
-                  <Ionicons name="cloud-upload-outline" size={16} color={C.primary} />
-                  <Text style={styles.csvImportBtnText}>結果</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDeleteTournament(t)} style={styles.deleteBtn}>
-                  <Ionicons name="trash-outline" size={20} color={C.danger} />
-                </TouchableOpacity>
+          {/* 主催大会サブページへの導線 */}
+          <TouchableOpacity style={styles.subPageLink} onPress={() => { fetchMyLeagues(); setShowOrganizerPage(true); }}>
+            <View style={styles.subPageLinkLeft}>
+              <Ionicons name="calendar-outline" size={20} color={C.primary} />
+              <View>
+                <Text style={styles.subPageLinkTitle}>主催大会</Text>
+                <Text style={styles.subPageLinkSub}>{myTournaments.length}件の大会</Text>
               </View>
-            ))
-          )}
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={C.textSub} />
+          </TouchableOpacity>
         </>
       );
     }
@@ -309,7 +327,7 @@ export default function MyPageScreen() {
     if (organizerStatus === "pending") {
       return (
         <View style={styles.pendingCard}>
-          <Ionicons name="time-outline" size={24} color={C.pending} />
+          <Ionicons name="time-outline" size={24} color={C.warning} />
           <View style={{ marginLeft: 12, flex: 1 }}>
             <Text style={styles.applyTitle}>主催者申請 審査中</Text>
             <Text style={styles.applySub}>管理者の承認をお待ちください</Text>
@@ -346,6 +364,46 @@ export default function MyPageScreen() {
         <Ionicons name="chevron-forward" size={18} color={C.textSub} />
       </TouchableOpacity>
     );
+  };
+
+  // --- 大会リストレンダリング ---
+  const renderTournamentList = (items, emptyText) => {
+    if (items.length === 0) {
+      return <Text style={styles.subPageEmpty}>{emptyText}</Text>;
+    }
+    return items.map((t) => (
+      <View key={t.id} style={styles.tournamentItem}>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.gameTag, { color: t.game_color }]}>{t.game}</Text>
+          <Text style={styles.tournamentName}>{t.name}</Text>
+          <Text style={styles.tournamentDate}>
+            {new Date(t.date).toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => handleCSVImportForTournament(t)} style={styles.csvImportBtn}>
+          <Ionicons name="cloud-upload-outline" size={16} color={C.primary} />
+          <Text style={styles.csvImportBtnText}>結果</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => handleDeleteTournament(t)} style={styles.deleteBtn}>
+          <Ionicons name="trash-outline" size={20} color={C.danger} />
+        </TouchableOpacity>
+      </View>
+    ));
+  };
+
+  // 交換ステータスのラベル
+  const getStatusLabel = (status) => {
+    if (status === "pending") return "対応待ち";
+    if (status === "shipped") return "発送済み";
+    if (status === "completed") return "完了";
+    return "キャンセル";
+  };
+
+  const getStatusColor = (status) => {
+    if (status === "pending") return { bg: "#FEF3C7", text: "#D97706" };
+    if (status === "shipped") return { bg: "#DBEAFE", text: "#2563EB" };
+    if (status === "completed") return { bg: "#DCFCE7", text: "#16A34A" };
+    return { bg: "#FEE2E2", text: "#EF4444" };
   };
 
   return (
@@ -446,84 +504,18 @@ export default function MyPageScreen() {
         {/* === 主催者セクション === */}
         {renderOrganizerSection()}
 
-        {/* === 交換履歴 === */}
+        {/* === 交換履歴 サブページリンク === */}
         {myExchanges.length > 0 && (
-          <>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>交換履歴</Text>
+          <TouchableOpacity style={styles.subPageLink} onPress={() => setShowExchangeHistory(true)}>
+            <View style={styles.subPageLinkLeft}>
+              <Ionicons name="receipt-outline" size={20} color={C.primary} />
+              <View>
+                <Text style={styles.subPageLinkTitle}>交換履歴</Text>
+                <Text style={styles.subPageLinkSub}>{myExchanges.length}件</Text>
+              </View>
             </View>
-            {myExchanges.map((ex) => {
-              const displayIcon = ex.prize_icon || ex.sponsor_items?.icon || "🎁";
-              const displayName = ex.type === "instant_lottery_win"
-                ? (ex.prize_name || ex.sponsor_items?.name || "即時抽選当選")
-                : (ex.sponsor_items?.name || "不明な商品");
-              const hasGiftCode = ex.status === "completed" && ex.gift_code;
-
-              return (
-                <TouchableOpacity
-                  key={ex.id}
-                  style={styles.exchangeHistoryItem}
-                  activeOpacity={hasGiftCode ? 0.6 : 1}
-                  onPress={() => {
-                    if (hasGiftCode) {
-                      Alert.alert(
-                        "🎫 ギフトコード",
-                        ex.gift_code,
-                        [
-                          { text: "閉じる", style: "cancel" },
-                          {
-                            text: "コピー",
-                            onPress: async () => {
-                              await Clipboard.setStringAsync(ex.gift_code);
-                              Alert.alert("コピーしました", "ギフトコードをクリップボードにコピーしました");
-                            },
-                          },
-                        ]
-                      );
-                    }
-                  }}
-                >
-                  <Text style={styles.exchangeHistoryIcon}>{displayIcon}</Text>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                      <Text style={styles.exchangeHistoryName}>{displayName}</Text>
-                      {ex.type === "instant_lottery_win" && (
-                        <Text style={{ fontSize: 10, color: C.primary, fontWeight: "bold" }}>抽選</Text>
-                      )}
-                    </View>
-                    <Text style={styles.exchangeHistoryDate}>
-                      {new Date(ex.created_at).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })}
-                      {" · "}{ex.points_spent}pt
-                    </Text>
-                    {hasGiftCode && (
-                      <Text style={{ fontSize: 11, color: C.primary, marginTop: 2 }}>
-                        🎫 タップしてコードを表示
-                      </Text>
-                    )}
-                  </View>
-                  <View style={[
-                    styles.exchangeStatusBadge,
-                    ex.status === "pending" && { backgroundColor: "#FEF3C7" },
-                    ex.status === "shipped" && { backgroundColor: "#DBEAFE" },
-                    ex.status === "completed" && { backgroundColor: "#DCFCE7" },
-                    ex.status === "cancelled" && { backgroundColor: "#FEE2E2" },
-                  ]}>
-                    <Text style={[
-                      styles.exchangeStatusText,
-                      ex.status === "pending" && { color: "#D97706" },
-                      ex.status === "shipped" && { color: "#2563EB" },
-                      ex.status === "completed" && { color: "#16A34A" },
-                      ex.status === "cancelled" && { color: "#EF4444" },
-                    ]}>
-                      {ex.status === "pending" ? "対応待ち" :
-                       ex.status === "shipped" ? "発送済み" :
-                       ex.status === "completed" ? "完了" : "キャンセル"}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </>
+            <Ionicons name="chevron-forward" size={18} color={C.textSub} />
+          </TouchableOpacity>
         )}
 
         {/* === プレミアムプラン導線 === */}
@@ -566,6 +558,191 @@ export default function MyPageScreen() {
         </View>
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      {/* ============================================================ */}
+      {/* === 交換履歴 サブページモーダル === */}
+      {/* ============================================================ */}
+      <Modal visible={showExchangeHistory} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.modalContainer, { paddingTop: insets.top || 16 }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowExchangeHistory(false)} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>閉じる</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>交換履歴</Text>
+            <View style={styles.modalHeaderBtn} />
+          </View>
+          <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+            {myExchanges.map((ex) => {
+              const displayIcon = ex.prize_icon || ex.sponsor_items?.icon || "🎁";
+              const exName = ex.type === "instant_lottery_win"
+                ? (ex.prize_name || ex.sponsor_items?.name || "即時抽選当選")
+                : (ex.sponsor_items?.name || "不明な商品");
+              const sc = getStatusColor(ex.status);
+
+              return (
+                <TouchableOpacity
+                  key={ex.id}
+                  style={styles.exchangeHistoryItem}
+                  onPress={() => setSelectedExchange({ ...ex, displayIcon, exName })}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.exchangeHistoryIcon}>{displayIcon}</Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                      <Text style={styles.exchangeHistoryName}>{exName}</Text>
+                      {ex.type === "instant_lottery_win" && (
+                        <Text style={{ fontSize: 10, color: C.primary, fontWeight: "bold" }}>抽選</Text>
+                      )}
+                    </View>
+                    <Text style={styles.exchangeHistoryDate}>
+                      {new Date(ex.created_at).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })}
+                      {" · "}{ex.points_spent}pt
+                    </Text>
+                  </View>
+                  <View style={[styles.exchangeStatusBadge, { backgroundColor: sc.bg }]}>
+                    <Text style={[styles.exchangeStatusText, { color: sc.text }]}>{getStatusLabel(ex.status)}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={C.textSub} style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              );
+            })}
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* === 交換詳細モーダル === */}
+      <Modal visible={!!selectedExchange} animationType="fade" transparent>
+        <View style={styles.overlay}>
+          <View style={styles.detailSheet}>
+            {selectedExchange && (() => {
+              const ex = selectedExchange;
+              const sc = getStatusColor(ex.status);
+              const hasGiftCode = ex.status === "completed" && ex.gift_code;
+              return (
+                <>
+                  <View style={styles.detailHeader}>
+                    <Text style={styles.detailIcon}>{ex.displayIcon}</Text>
+                    <Text style={styles.detailName}>{ex.exName}</Text>
+                  </View>
+
+                  <View style={[styles.detailStatusRow, { backgroundColor: sc.bg }]}>
+                    <Text style={[styles.detailStatusText, { color: sc.text }]}>{getStatusLabel(ex.status)}</Text>
+                  </View>
+
+                  <View style={styles.detailInfoRow}>
+                    <Text style={styles.detailInfoLabel}>交換日</Text>
+                    <Text style={styles.detailInfoValue}>
+                      {new Date(ex.created_at).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                    </Text>
+                  </View>
+                  <View style={styles.detailInfoRow}>
+                    <Text style={styles.detailInfoLabel}>消費ポイント</Text>
+                    <Text style={styles.detailInfoValue}>{ex.points_spent}pt</Text>
+                  </View>
+                  {ex.type === "instant_lottery_win" && (
+                    <View style={styles.detailInfoRow}>
+                      <Text style={styles.detailInfoLabel}>種類</Text>
+                      <Text style={[styles.detailInfoValue, { color: C.primary }]}>即時抽選当選</Text>
+                    </View>
+                  )}
+
+                  {/* ギフトコード */}
+                  {hasGiftCode && (
+                    <View style={styles.giftCodeSection}>
+                      <Text style={styles.giftCodeLabel}>ギフトコード</Text>
+                      <TouchableOpacity
+                        style={styles.giftCodeBox}
+                        onPress={() => handleCopyCode(ex.gift_code)}
+                        activeOpacity={0.6}
+                      >
+                        <Text style={styles.giftCodeText}>{ex.gift_code}</Text>
+                        <View style={styles.giftCodeCopy}>
+                          <Ionicons name="copy-outline" size={16} color="#fff" />
+                          <Text style={styles.giftCodeCopyText}>コピー</Text>
+                        </View>
+                      </TouchableOpacity>
+                      <Text style={styles.giftCodeHint}>タップしてコードをコピー</Text>
+                    </View>
+                  )}
+
+                  <TouchableOpacity onPress={() => setSelectedExchange(null)} style={styles.detailCloseBtn}>
+                    <Text style={styles.detailCloseText}>閉じる</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* === 主催大会 サブページモーダル === */}
+      {/* ============================================================ */}
+      <Modal visible={showOrganizerPage} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.modalContainer, { paddingTop: insets.top || 16 }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowOrganizerPage(false)} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>閉じる</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>主催大会</Text>
+            <TouchableOpacity onPress={() => setShowCreateTournament(true)} style={styles.modalHeaderBtn}>
+              <Text style={styles.modalHeaderClose}>+ 新規</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+            {/* 開催中のリーグ戦 */}
+            <View style={styles.subPageSectionHeader}>
+              <Ionicons name="trophy-outline" size={18} color="#8B5CF6" />
+              <Text style={styles.subPageSectionTitle}>開催中のリーグ戦</Text>
+            </View>
+            {activeLeagues.length === 0 ? (
+              <Text style={styles.subPageEmpty}>開催中のリーグはありません</Text>
+            ) : (
+              activeLeagues.map((l) => (
+                <TouchableOpacity
+                  key={l.id}
+                  style={styles.leagueListItem}
+                  onPress={() => { setShowOrganizerPage(false); setTimeout(() => setShowLeague(true), 350); }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.gameTag, { color: l.game_color }]}>{l.game}</Text>
+                    <Text style={styles.tournamentName}>{l.name}</Text>
+                    {l.season_name && <Text style={styles.tournamentDate}>{l.season_name}</Text>}
+                  </View>
+                  <View style={styles.leagueActiveBadge}>
+                    <Text style={styles.leagueActiveBadgeText}>開催中</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={C.textSub} />
+                </TouchableOpacity>
+              ))
+            )}
+
+            {/* 現在開催中の大会 */}
+            <View style={[styles.subPageSectionHeader, { marginTop: 24 }]}>
+              <Ionicons name="flame-outline" size={18} color={C.primary} />
+              <Text style={styles.subPageSectionTitle}>現在開催中の大会</Text>
+            </View>
+            {renderTournamentList(categorizedTournaments.active, "現在開催中の大会はありません")}
+
+            {/* エントリー受付中の大会 */}
+            <View style={[styles.subPageSectionHeader, { marginTop: 24 }]}>
+              <Ionicons name="person-add-outline" size={18} color="#3B82F6" />
+              <Text style={styles.subPageSectionTitle}>エントリー受付中の大会</Text>
+            </View>
+            {renderTournamentList(categorizedTournaments.accepting, "エントリー受付中の大会はありません")}
+
+            {/* 終了済みの大会 */}
+            <View style={[styles.subPageSectionHeader, { marginTop: 24 }]}>
+              <Ionicons name="checkmark-circle-outline" size={18} color={C.success} />
+              <Text style={styles.subPageSectionTitle}>終了済みの大会</Text>
+            </View>
+            {renderTournamentList(categorizedTournaments.completed, "終了済みの大会はありません")}
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* === 名前編集モーダル === */}
       <Modal visible={editingName} animationType="fade" transparent>
@@ -988,6 +1165,14 @@ const styles = StyleSheet.create({
   rejectedCard: { backgroundColor: "#FEF2F2", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", marginBottom: 10, elevation: 2, borderWidth: 1, borderColor: "#FECACA" },
   applyTitle: { fontSize: 15, fontWeight: "bold", color: C.text },
   applySub: { fontSize: 13, color: C.textSub, marginTop: 2 },
+  // サブページリンク
+  subPageLink: {
+    backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between", elevation: 2,
+  },
+  subPageLinkLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  subPageLinkTitle: { fontSize: 15, fontWeight: "bold", color: C.text },
+  subPageLinkSub: { fontSize: 12, color: C.textSub, marginTop: 1 },
   // 交換履歴
   exchangeHistoryItem: { backgroundColor: C.card, borderRadius: 12, padding: 14, marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 12, elevation: 2 },
   exchangeHistoryIcon: { fontSize: 28 },
@@ -995,6 +1180,41 @@ const styles = StyleSheet.create({
   exchangeHistoryDate: { fontSize: 12, color: C.textSub, marginTop: 2 },
   exchangeStatusBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
   exchangeStatusText: { fontSize: 11, fontWeight: "bold" },
+  // 交換詳細モーダル
+  detailSheet: { backgroundColor: C.card, borderRadius: 16, padding: 24, width: "100%" },
+  detailHeader: { alignItems: "center", marginBottom: 16 },
+  detailIcon: { fontSize: 48, marginBottom: 8 },
+  detailName: { fontSize: 18, fontWeight: "bold", color: C.text, textAlign: "center" },
+  detailStatusRow: { alignItems: "center", borderRadius: 8, paddingVertical: 8, marginBottom: 16 },
+  detailStatusText: { fontSize: 14, fontWeight: "bold" },
+  detailInfoRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
+  detailInfoLabel: { fontSize: 14, color: C.textSub },
+  detailInfoValue: { fontSize: 14, fontWeight: "bold", color: C.text },
+  giftCodeSection: { marginTop: 16 },
+  giftCodeLabel: { fontSize: 13, fontWeight: "bold", color: C.textSub, marginBottom: 8 },
+  giftCodeBox: {
+    backgroundColor: C.dark, borderRadius: 12, padding: 16,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+  },
+  giftCodeText: { fontSize: 18, fontWeight: "bold", color: "#fff", letterSpacing: 1, flex: 1 },
+  giftCodeCopy: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: C.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  giftCodeCopyText: { fontSize: 12, fontWeight: "bold", color: "#fff" },
+  giftCodeHint: { fontSize: 11, color: C.textSub, textAlign: "center", marginTop: 6 },
+  detailCloseBtn: { alignItems: "center", paddingVertical: 14, marginTop: 8 },
+  detailCloseText: { fontSize: 15, color: C.textSub, fontWeight: "600" },
+  // 主催大会サブページ
+  subPageSectionHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  subPageSectionTitle: { fontSize: 15, fontWeight: "bold", color: C.text },
+  subPageEmpty: { fontSize: 13, color: C.textSub, textAlign: "center", paddingVertical: 16, backgroundColor: C.card, borderRadius: 10, marginBottom: 8 },
+  leagueListItem: {
+    backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 8,
+    flexDirection: "row", alignItems: "center", elevation: 2,
+  },
+  leagueActiveBadge: { backgroundColor: "#DCFCE7", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginRight: 8 },
+  leagueActiveBadgeText: { fontSize: 10, fontWeight: "bold", color: C.success },
   // プレミアム
   premiumCard: { backgroundColor: "#FFFBEB", borderRadius: 12, padding: 16, flexDirection: "row", alignItems: "center", marginTop: 8, marginBottom: 4, elevation: 2, borderWidth: 1, borderColor: "#FDE68A" },
   premiumCardLeft: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12 },

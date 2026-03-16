@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import {
-  View, Text, ScrollView, TouchableOpacity,
+  View, Text, ScrollView, TouchableOpacity, Keyboard, TouchableWithoutFeedback,
   StyleSheet, Alert, TextInput, Modal, Linking, ActivityIndicator, Image, RefreshControl
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -225,6 +225,8 @@ export default function SponsorScreen() {
     <ScrollView
       style={styles.screen}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      onScrollBeginDrag={Keyboard.dismiss}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.primary} colors={[C.primary]} />}
     >
       {/* ポイントカード */}
@@ -490,6 +492,8 @@ export default function SponsorScreen() {
                             onChangeText={(t) => setTicketCount(item.id, parseInt(t) || 1)}
                             keyboardType="number-pad"
                             textAlign="center"
+                            returnKeyType="done"
+                            onSubmitEditing={Keyboard.dismiss}
                           />
                           <TouchableOpacity style={styles.stepperBtn} onPress={() => setTicketCount(item.id, ticketCount + 1)}>
                             <Ionicons name="add" size={18} color={C.text} />
