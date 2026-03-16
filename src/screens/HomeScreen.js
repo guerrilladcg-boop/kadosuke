@@ -17,6 +17,7 @@ import { C } from "../constants/theme";
 import { useResults } from "../hooks/useResults";
 import { useTournaments } from "../hooks/useTournaments";
 import { useOrganizerFollows } from "../hooks/useOrganizerFollows";
+import { useLeagues } from "../hooks/useLeagues";
 import { shareTournamentResult } from "../utils/share";
 import AddResultModal from "../components/AddResultModal";
 import TournamentDetailModal from "../components/TournamentDetailModal";
@@ -89,6 +90,18 @@ export default function HomeScreen() {
   const { tournaments, loading: tourLoading, search, toggleFavorite, toggleEntry } = useTournaments();
   const { followedIdsArray, isFollowing, toggleFollow, loading: followLoading } = useOrganizerFollows();
   const [selectedTournament, setSelectedTournament] = useState(null);
+
+  // リーグ参加中データ
+  const { participatingLeagues, fetchMyParticipatingLeagues } = useLeagues();
+  const [leagueLoading, setLeagueLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLeagueLoading(true);
+      await fetchMyParticipatingLeagues();
+      setLeagueLoading(false);
+    })();
+  }, [fetchMyParticipatingLeagues]);
 
   // フォロー中タブが選択されたらフォロー主催者の大会を取得
   useEffect(() => {
@@ -393,6 +406,91 @@ export default function HomeScreen() {
         <Text style={styles.shareBtnText}>シェア</Text>
       </TouchableOpacity>
 
+      {/* 参加中リーグサマリー */}
+      {participatingLeagues.length > 0 && (
+        <View style={styles.leagueSummarySection}>
+          <Text style={styles.leagueSummaryTitle}>参加中のリーグ</Text>
+          {participatingLeagues.map((league) => (
+            <View key={league.id} style={styles.leagueCard}>
+              <View style={styles.leagueCardHeader}>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={[styles.gameTag, { color: league.game_color }]}>{league.game}</Text>
+                    <View style={styles.leagueActiveBadge}>
+                      <Text style={styles.leagueActiveBadgeText}>開催中</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.leagueCardName}>{league.name}</Text>
+                  {league.season_name && (
+                    <Text style={styles.leagueCardSeason}>{league.season_name}</Text>
+                  )}
+                </View>
+              </View>
+
+              {/* 自分の順位・ポイント */}
+              {league.myStanding ? (
+                <View style={styles.myStandingRow}>
+                  <View style={styles.myRankBox}>
+                    <Text style={styles.myRankLabel}>順位</Text>
+                    <Text style={[styles.myRankValue, league.myStanding.rank <= 3 && { color: C.primary }]}>
+                      {league.myStanding.rank}/{league.totalPlayers}
+                    </Text>
+                  </View>
+                  <View style={styles.myStandingDivider} />
+                  <View style={styles.myRankBox}>
+                    <Text style={styles.myRankLabel}>ポイント</Text>
+                    <Text style={styles.myRankValue}>{league.myStanding.total_points}pt</Text>
+                  </View>
+                  <View style={styles.myStandingDivider} />
+                  <View style={styles.myRankBox}>
+                    <Text style={styles.myRankLabel}>戦績</Text>
+                    <Text style={styles.myRankValue}>
+                      {league.myStanding.total_wins}W {league.myStanding.total_losses}L
+                      {league.myStanding.total_draws > 0 ? ` ${league.myStanding.total_draws}D` : ""}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.myStandingEmpty}>
+                  <Text style={styles.myStandingEmptyText}>まだ結果がありません</Text>
+                </View>
+              )}
+
+              {/* トップ5のミニランキング */}
+              {league.topStandings.length > 0 && (
+                <View style={styles.miniRanking}>
+                  {league.topStandings.map((s, i) => {
+                    const isMe = s.player_name === league.myPlayerName;
+                    return (
+                      <View key={s.id || i} style={[styles.miniRankRow, isMe && styles.miniRankRowMe]}>
+                        <Text style={[styles.miniRankNum, i < 3 && { color: C.primary, fontWeight: "bold" }]}>
+                          {s.rank}
+                        </Text>
+                        <Text style={[styles.miniRankName, isMe && { fontWeight: "bold", color: C.primary }]} numberOfLines={1}>
+                          {s.player_name}{isMe ? " (自分)" : ""}
+                        </Text>
+                        <Text style={[styles.miniRankPts, isMe && { color: C.primary }]}>{s.total_points}pt</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* 勝ち点ルール表示 */}
+              <View style={styles.leagueRuleInfo}>
+                <Ionicons name="calculator-outline" size={12} color={C.textSub} />
+                <Text style={styles.leagueRuleText}>
+                  {league.point_rule_type === "ranking"
+                    ? (league.point_ranking || []).map((p, i) => `${i + 1}位:${p}pt`).join("  ")
+                    : `勝${league.point_win ?? 3}  負${league.point_loss ?? 0}  分${league.point_draw ?? 1}`
+                  }
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>直近の戦績</Text>
         <TouchableOpacity onPress={() => setShowAdd(true)}>
@@ -403,7 +501,7 @@ export default function HomeScreen() {
         <Text style={styles.hint}>タップで詳細 / 長押しで削除</Text>
       )}
     </>
-  ), [gold, silver, bronze, stats, showGameFilter, selectedGame, uniqueGames, results.length]);
+  ), [gold, silver, bronze, stats, showGameFilter, selectedGame, uniqueGames, results.length, participatingLeagues]);
 
   return (
     <>
@@ -643,4 +741,41 @@ const styles = StyleSheet.create({
   skelLine40: { height: 10, width: 40, backgroundColor: C.border, borderRadius: 5 },
   skelLine60: { height: 10, width: 60, backgroundColor: C.border, borderRadius: 5 },
   skelBadge: { width: 56, height: 32, backgroundColor: C.border, borderRadius: 8 },
+
+  // リーグサマリー
+  leagueSummarySection: { marginBottom: 16 },
+  leagueSummaryTitle: { fontSize: 15, fontWeight: "bold", color: C.text, marginBottom: 10 },
+  leagueCard: {
+    backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10,
+    elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4,
+  },
+  leagueCardHeader: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12 },
+  leagueCardName: { fontSize: 15, fontWeight: "bold", color: C.text, marginTop: 4 },
+  leagueCardSeason: { fontSize: 12, color: C.textSub, marginTop: 2 },
+  leagueActiveBadge: { backgroundColor: C.successBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  leagueActiveBadgeText: { fontSize: 10, fontWeight: "bold", color: C.success },
+  // 自分の順位
+  myStandingRow: {
+    flexDirection: "row", backgroundColor: C.bg, borderRadius: 10, padding: 12,
+    marginBottom: 10,
+  },
+  myRankBox: { flex: 1, alignItems: "center" },
+  myRankLabel: { fontSize: 10, color: C.textSub, marginBottom: 2 },
+  myRankValue: { fontSize: 16, fontWeight: "bold", color: C.text },
+  myStandingDivider: { width: 1, backgroundColor: C.border, marginVertical: 2 },
+  myStandingEmpty: { alignItems: "center", paddingVertical: 10, backgroundColor: C.bg, borderRadius: 10, marginBottom: 10 },
+  myStandingEmptyText: { fontSize: 12, color: C.textSub },
+  // ミニランキング
+  miniRanking: { marginBottom: 8 },
+  miniRankRow: {
+    flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border,
+  },
+  miniRankRowMe: { backgroundColor: C.primaryBg, borderRadius: 6 },
+  miniRankNum: { width: 24, fontSize: 13, color: C.textSub, textAlign: "center" },
+  miniRankName: { flex: 1, fontSize: 13, color: C.text, marginLeft: 4 },
+  miniRankPts: { fontSize: 13, fontWeight: "bold", color: C.text, marginLeft: 8 },
+  // 勝ち点ルール
+  leagueRuleInfo: { flexDirection: "row", alignItems: "center", gap: 4 },
+  leagueRuleText: { fontSize: 11, color: C.textSub },
 });

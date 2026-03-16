@@ -33,9 +33,30 @@ export default function LeagueManageModal({ visible, onClose }) {
   const [formDesc, setFormDesc] = useState("");
   const [creating, setCreating] = useState(false);
 
+  // 勝ち点設定
+  const [pointRuleType, setPointRuleType] = useState("wld"); // wld | ranking
+  const [pointWin, setPointWin] = useState("3");
+  const [pointLoss, setPointLoss] = useState("0");
+  const [pointDraw, setPointDraw] = useState("1");
+  const [rankingPoints, setRankingPoints] = useState([
+    { rank: 1, points: "10" },
+    { rank: 2, points: "5" },
+    { rank: 3, points: "3" },
+    { rank: 4, points: "1" },
+  ]);
+
   useEffect(() => {
     if (visible) fetchMyLeagues();
   }, [visible]);
+
+  const resetForm = () => {
+    setFormName(""); setFormGame(null); setFormSeason(""); setFormDesc("");
+    setPointRuleType("wld"); setPointWin("3"); setPointLoss("0"); setPointDraw("1");
+    setRankingPoints([
+      { rank: 1, points: "10" }, { rank: 2, points: "5" },
+      { rank: 3, points: "3" }, { rank: 4, points: "1" },
+    ]);
+  };
 
   const handleCreate = async () => {
     if (!formName || !formGame) {
@@ -43,18 +64,28 @@ export default function LeagueManageModal({ visible, onClose }) {
       return;
     }
     setCreating(true);
-    const { error } = await createLeague({
+
+    const leagueData = {
       name: formName,
       game: formGame.name,
       game_color: formGame.color,
       season_name: formSeason || null,
       description: formDesc || null,
-    });
+      point_rule_type: pointRuleType,
+      point_win: parseInt(pointWin, 10) || 0,
+      point_loss: parseInt(pointLoss, 10) || 0,
+      point_draw: parseInt(pointDraw, 10) || 0,
+      point_ranking: pointRuleType === "ranking"
+        ? rankingPoints.map((r) => parseInt(r.points, 10) || 0)
+        : null,
+    };
+
+    const { error } = await createLeague(leagueData);
     setCreating(false);
     if (error) {
       Alert.alert("エラー", "作成に失敗しました");
     } else {
-      setFormName(""); setFormGame(null); setFormSeason(""); setFormDesc("");
+      resetForm();
       setView("list");
     }
   };
@@ -120,6 +151,35 @@ export default function LeagueManageModal({ visible, onClose }) {
     ]);
   };
 
+  const addRankingRow = () => {
+    setRankingPoints((prev) => [
+      ...prev,
+      { rank: prev.length + 1, points: "0" },
+    ]);
+  };
+
+  const removeRankingRow = () => {
+    if (rankingPoints.length > 1) {
+      setRankingPoints((prev) => prev.slice(0, -1));
+    }
+  };
+
+  const updateRankingPoint = (index, value) => {
+    setRankingPoints((prev) =>
+      prev.map((r, i) => (i === index ? { ...r, points: value } : r))
+    );
+  };
+
+  // 勝ち点ルール表示ラベル
+  const getPointRuleLabel = (league) => {
+    if (!league) return "";
+    if (league.point_rule_type === "ranking") {
+      const pts = league.point_ranking || [];
+      return pts.map((p, i) => `${i + 1}位:${p}pt`).join("  ");
+    }
+    return `勝${league.point_win ?? 3}  負${league.point_loss ?? 0}  分${league.point_draw ?? 1}`;
+  };
+
   // === リスト表示 ===
   const renderList = () => (
     <>
@@ -151,6 +211,7 @@ export default function LeagueManageModal({ visible, onClose }) {
               </View>
               <Text style={styles.leagueName}>{l.name}</Text>
               {l.season_name && <Text style={styles.leagueSub}>{l.season_name}</Text>}
+              <Text style={styles.pointRuleLabel}>{getPointRuleLabel(l)}</Text>
             </View>
             <TouchableOpacity onPress={() => handleDelete(l)} style={{ padding: 8 }}>
               <Ionicons name="trash-outline" size={18} color={C.danger} />
@@ -195,6 +256,102 @@ export default function LeagueManageModal({ visible, onClose }) {
       <Text style={styles.label}>説明</Text>
       <TextInput style={[styles.input, { height: 80, textAlignVertical: "top" }]} placeholder="リーグの説明" placeholderTextColor={C.textSub} value={formDesc} onChangeText={setFormDesc} multiline />
 
+      {/* 勝ち点設定 */}
+      <Text style={[styles.label, { marginTop: 24 }]}>勝ち点ルール</Text>
+      <View style={styles.ruleToggle}>
+        <TouchableOpacity
+          style={[styles.ruleBtn, pointRuleType === "wld" && styles.ruleBtnActive]}
+          onPress={() => setPointRuleType("wld")}
+        >
+          <Ionicons name="swap-horizontal-outline" size={16} color={pointRuleType === "wld" ? "#fff" : C.text} />
+          <Text style={[styles.ruleBtnText, pointRuleType === "wld" && styles.ruleBtnTextActive]}>
+            勝敗ベース
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.ruleBtn, pointRuleType === "ranking" && styles.ruleBtnActive]}
+          onPress={() => setPointRuleType("ranking")}
+        >
+          <Ionicons name="podium-outline" size={16} color={pointRuleType === "ranking" ? "#fff" : C.text} />
+          <Text style={[styles.ruleBtnText, pointRuleType === "ranking" && styles.ruleBtnTextActive]}>
+            順位ベース
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {pointRuleType === "wld" ? (
+        <View style={styles.wldConfig}>
+          <Text style={styles.configHint}>各ラウンドの勝ち/負け/引分けに対するポイント</Text>
+          <View style={styles.wldRow}>
+            <View style={styles.wldItem}>
+              <Text style={[styles.wldLabel, { color: C.success }]}>勝ち</Text>
+              <TextInput
+                style={styles.wldInput}
+                keyboardType="number-pad"
+                value={pointWin}
+                onChangeText={setPointWin}
+              />
+            </View>
+            <View style={styles.wldItem}>
+              <Text style={[styles.wldLabel, { color: C.danger }]}>負け</Text>
+              <TextInput
+                style={styles.wldInput}
+                keyboardType="number-pad"
+                value={pointLoss}
+                onChangeText={setPointLoss}
+              />
+            </View>
+            <View style={styles.wldItem}>
+              <Text style={[styles.wldLabel, { color: C.warning }]}>引分</Text>
+              <TextInput
+                style={styles.wldInput}
+                keyboardType="number-pad"
+                value={pointDraw}
+                onChangeText={setPointDraw}
+              />
+            </View>
+          </View>
+          <View style={styles.previewBox}>
+            <Ionicons name="information-circle-outline" size={14} color={C.textSub} />
+            <Text style={styles.previewText}>
+              例: 3勝1敗1分 → {3 * (parseInt(pointWin, 10) || 0) + 1 * (parseInt(pointLoss, 10) || 0) + 1 * (parseInt(pointDraw, 10) || 0)}pt
+            </Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.rankingConfig}>
+          <Text style={styles.configHint}>各ラウンドの順位に対するポイント</Text>
+          {rankingPoints.map((r, i) => (
+            <View key={i} style={styles.rankingRow}>
+              <View style={styles.rankingLabel}>
+                <Text style={styles.rankingRank}>{r.rank}位</Text>
+              </View>
+              <TextInput
+                style={styles.rankingInput}
+                keyboardType="number-pad"
+                value={r.points}
+                onChangeText={(v) => updateRankingPoint(i, v)}
+                placeholder="0"
+                placeholderTextColor={C.textSub}
+              />
+              <Text style={styles.rankingPt}>pt</Text>
+            </View>
+          ))}
+          <View style={styles.rankingActions}>
+            <TouchableOpacity style={styles.rankingActionBtn} onPress={addRankingRow}>
+              <Ionicons name="add-circle-outline" size={18} color={C.primary} />
+              <Text style={styles.rankingActionText}>追加</Text>
+            </TouchableOpacity>
+            {rankingPoints.length > 1 && (
+              <TouchableOpacity style={styles.rankingActionBtn} onPress={removeRankingRow}>
+                <Ionicons name="remove-circle-outline" size={18} color={C.danger} />
+                <Text style={[styles.rankingActionText, { color: C.danger }]}>削除</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
       <TouchableOpacity
         style={[styles.submitBtn, creating && { opacity: 0.6 }]}
         onPress={handleCreate}
@@ -219,6 +376,12 @@ export default function LeagueManageModal({ visible, onClose }) {
       {selectedLeague?.season_name && (
         <Text style={styles.detailSeason}>{selectedLeague.season_name}</Text>
       )}
+
+      {/* 勝ち点ルール表示 */}
+      <View style={styles.pointRuleCard}>
+        <Ionicons name="calculator-outline" size={16} color={C.primary} />
+        <Text style={styles.pointRuleCardText}>{getPointRuleLabel(selectedLeague)}</Text>
+      </View>
 
       {/* ラウンド一覧 */}
       <View style={styles.roundsHeader}>
@@ -351,6 +514,7 @@ const styles = StyleSheet.create({
   leagueSub: { fontSize: 12, color: C.textSub, marginTop: 2 },
   completedBadge: { backgroundColor: "#DCFCE7", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
   completedText: { fontSize: 11, fontWeight: "bold", color: C.success },
+  pointRuleLabel: { fontSize: 11, color: C.textSub, marginTop: 4 },
   // フォーム
   label: { fontSize: 13, fontWeight: "bold", color: C.textSub, marginBottom: 6, marginTop: 16 },
   input: { backgroundColor: C.card, borderRadius: 10, padding: 14, fontSize: 15, color: C.text, borderWidth: 1, borderColor: C.border },
@@ -359,8 +523,52 @@ const styles = StyleSheet.create({
   gameBtnText: { fontSize: 13, color: C.text },
   submitBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 16, alignItems: "center", marginTop: 24 },
   submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  // 勝ち点ルール切替
+  ruleToggle: { flexDirection: "row", gap: 8 },
+  ruleBtn: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.card,
+  },
+  ruleBtnActive: { backgroundColor: C.primary, borderColor: C.primary },
+  ruleBtnText: { fontSize: 14, fontWeight: "bold", color: C.text },
+  ruleBtnTextActive: { color: "#fff" },
+  // WLD設定
+  wldConfig: { marginTop: 12, backgroundColor: C.card, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: C.border },
+  configHint: { fontSize: 12, color: C.textSub, marginBottom: 12 },
+  wldRow: { flexDirection: "row", gap: 12 },
+  wldItem: { flex: 1, alignItems: "center" },
+  wldLabel: { fontSize: 13, fontWeight: "bold", marginBottom: 6 },
+  wldInput: {
+    width: "100%", textAlign: "center", backgroundColor: C.bg, borderRadius: 8,
+    paddingVertical: 10, fontSize: 20, fontWeight: "bold", color: C.text,
+    borderWidth: 1, borderColor: C.border,
+  },
+  previewBox: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginTop: 12, backgroundColor: C.bg, borderRadius: 8, padding: 10,
+  },
+  previewText: { fontSize: 12, color: C.textSub },
+  // ランキング設定
+  rankingConfig: { marginTop: 12, backgroundColor: C.card, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: C.border },
+  rankingRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  rankingLabel: { width: 40, alignItems: "center" },
+  rankingRank: { fontSize: 14, fontWeight: "bold", color: C.text },
+  rankingInput: {
+    flex: 1, textAlign: "center", backgroundColor: C.bg, borderRadius: 8,
+    paddingVertical: 8, fontSize: 18, fontWeight: "bold", color: C.text,
+    borderWidth: 1, borderColor: C.border,
+  },
+  rankingPt: { fontSize: 14, color: C.textSub, fontWeight: "bold", width: 24 },
+  rankingActions: { flexDirection: "row", gap: 16, marginTop: 4 },
+  rankingActionBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 4 },
+  rankingActionText: { fontSize: 13, fontWeight: "bold", color: C.primary },
   // 詳細
   detailSeason: { fontSize: 13, color: C.textSub, textAlign: "center", marginBottom: 8 },
+  pointRuleCard: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: C.primaryBg, borderRadius: 10, padding: 12, marginBottom: 12,
+  },
+  pointRuleCardText: { fontSize: 13, fontWeight: "bold", color: C.primary },
   roundsHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
   sectionLabel: { fontSize: 14, fontWeight: "bold", color: C.text, marginBottom: 8 },
   noDataText: { fontSize: 13, color: C.textSub, textAlign: "center", paddingVertical: 16 },
