@@ -85,10 +85,14 @@ export default function LeagueManageModal({ visible, onClose }) {
         ? rankingPoints.map((r) => parseInt(r.points, 10) || 0) : null,
       ranking_scale_by_participants: pointRuleType === "ranking" ? scaleByParticipants : false,
     };
-    const { error } = await createLeague(leagueData);
+    const { data, error } = await createLeague(leagueData);
     setCreating(false);
-    if (error) Alert.alert("エラー", "作成に失敗しました");
-    else { resetForm(); setView("list"); }
+    if (error) {
+      console.error("[LeagueManage] create error:", JSON.stringify(error));
+      Alert.alert("エラー", `作成に失敗しました\n${error.message || JSON.stringify(error)}`);
+    } else {
+      resetForm(); setView("list");
+    }
   };
 
   const openDetail = async (league) => {
@@ -559,7 +563,7 @@ export default function LeagueManageModal({ visible, onClose }) {
       <View style={[styles.container, { paddingTop: insets.top || 16 }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.headerBtn}><Text style={styles.cancel}>閉じる</Text></TouchableOpacity>
-          <Text style={styles.headerTitle}>リーグ管理</Text>
+          <Text style={styles.headerTitle}>リーグ管理 v2</Text>
           <View style={styles.headerBtn} />
         </View>
         <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>

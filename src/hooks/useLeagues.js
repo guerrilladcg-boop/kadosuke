@@ -85,12 +85,18 @@ export const useLeagues = () => {
   // --- リーグ作成 ---
   const createLeague = async (leagueData) => {
     if (!user) return { error: "未ログイン" };
+    console.log("[useLeagues] createLeague payload:", JSON.stringify(leagueData));
     const { data, error } = await supabase
       .from("leagues")
       .insert({ ...leagueData, created_by: user.id })
       .select()
       .single();
-    if (!error) await fetchMyLeagues();
+    if (error) {
+      console.error("[useLeagues] createLeague error:", JSON.stringify(error));
+    } else {
+      console.log("[useLeagues] createLeague success:", JSON.stringify(data));
+      await fetchMyLeagues();
+    }
     return { data, error };
   };
 

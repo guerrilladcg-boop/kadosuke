@@ -101,13 +101,18 @@ export default function HomeScreen() {
 
   useEffect(() => {
     (async () => {
-      setLeagueLoading(true);
-      await fetchMyParticipatingLeagues();
-      setLeagueLoading(false);
-      // 未読のリーグ完了通知をチェック
-      const unseen = await fetchUnseenCompletions();
-      if (unseen.length > 0) {
-        setCompletionQueue(unseen);
+      try {
+        setLeagueLoading(true);
+        await fetchMyParticipatingLeagues();
+        setLeagueLoading(false);
+        // 未読のリーグ完了通知をチェック
+        const unseen = await fetchUnseenCompletions();
+        if (unseen.length > 0) {
+          setCompletionQueue(unseen);
+        }
+      } catch (e) {
+        console.error("[HomeScreen] league fetch error:", e);
+        setLeagueLoading(false);
       }
     })();
   }, [fetchMyParticipatingLeagues]);
