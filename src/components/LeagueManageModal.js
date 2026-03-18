@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   View, Text, TextInput, TouchableOpacity, Modal, ScrollView,
-  StyleSheet, ActivityIndicator, Alert,
+  StyleSheet, ActivityIndicator, Alert, Switch,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,7 +16,7 @@ export default function LeagueManageModal({ visible, onClose }) {
   const insets = useSafeAreaInsets();
   const {
     leagues, loading, fetchMyLeagues, createLeague, deleteLeague,
-    completeLeague, fetchRounds, addRound, deleteRound,
+    completeLeagueWithNotification, fetchRounds, addRound, deleteRound,
     fetchRoundResults, importRoundResults,
     updateStandings, fetchStandings, fetchParticipants, removeParticipant,
   } = useLeagues();
@@ -52,6 +52,7 @@ export default function LeagueManageModal({ visible, onClose }) {
     { rank: 1, points: "10" }, { rank: 2, points: "5" },
     { rank: 3, points: "3" }, { rank: 4, points: "1" },
   ]);
+  const [scaleByParticipants, setScaleByParticipants] = useState(false);
 
   useEffect(() => {
     if (visible) fetchMyLeagues();
@@ -64,6 +65,7 @@ export default function LeagueManageModal({ visible, onClose }) {
       { rank: 1, points: "10" }, { rank: 2, points: "5" },
       { rank: 3, points: "3" }, { rank: 4, points: "1" },
     ]);
+    setScaleByParticipants(false);
   };
 
   const handleCreate = async () => {
@@ -81,6 +83,7 @@ export default function LeagueManageModal({ visible, onClose }) {
       point_draw: parseInt(pointDraw, 10) || 0,
       point_ranking: pointRuleType === "ranking"
         ? rankingPoints.map((r) => parseInt(r.points, 10) || 0) : null,
+      ranking_scale_by_participants: pointRuleType === "ranking" ? scaleByParticipants : false,
     };
     const { error } = await createLeague(leagueData);
     setCreating(false);
@@ -139,9 +142,9 @@ export default function LeagueManageModal({ visible, onClose }) {
   };
 
   const handleComplete = () => {
-    Alert.alert("リーグ終了", "このリーグを完了にしますか？", [
+    Alert.alert("リーグ終了", "このリーグを完了にしますか？\n参加者全員に結果が通知されます。", [
       { text: "キャンセル", style: "cancel" },
-      { text: "完了にする", onPress: async () => { await completeLeague(selectedLeague.id); setView("list"); } },
+      { text: "完了にする", onPress: async () => { await completeLeagueWithNotification(selectedLeague.id); setView("list"); } },
     ]);
   };
 
@@ -181,7 +184,8 @@ export default function LeagueManageModal({ visible, onClose }) {
   const getPointRuleLabel = (league) => {
     if (!league) return "";
     if (league.point_rule_type === "ranking") {
-      return (league.point_ranking || []).map((p, i) => `${i + 1}位:${p}pt`).join("  ");
+      const base = (league.point_ranking || []).map((p, i) => `${i + 1}位:${p}pt`).join("  ");
+      return base + (league.ranking_scale_by_participants ? "  (傾斜配点)" : "");
     }
     return `勝${league.point_win ?? 3}pt  負${league.point_loss ?? 0}pt  分${league.point_draw ?? 1}pt`;
   };
@@ -304,6 +308,29 @@ export default function LeagueManageModal({ visible, onClose }) {
               </TouchableOpacity>
             )}
           </View>
+
+          {/* 傾斜配点トグル */}
+          <View style={styles.scaleToggle}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scaleToggleLabel}>大会規模で傾斜配点</Text>
+              <Text style={styles.scaleToggleDesc}>参加人数が多い大会ほど高いポイントが付きます</Text>
+            </View>
+            <Switch
+              value={scaleByParticipants}
+              onValueChange={setScaleByParticipants}
+              trackColor={{ true: C.primary, false: C.border }}
+              thumbColor="#fff"
+            />
+          </View>
+          {scaleByParticipants && (
+            <View style={styles.scaleHint}>
+              <Ionicons name="information-circle-outline" size={14} color={C.textSub} />
+              <Text style={styles.scaleHintText}>
+                倍率 = そのラウンドの参加人数 ÷ 全ラウンド平均人数{"\n"}
+                例: 平均8人のリーグで16人の大会 → ポイント2倍
+              </Text>
+            </View>
+          )}
         </View>
       )}
       <TouchableOpacity style={[styles.submitBtn, creating && { opacity: 0.6 }]} onPress={handleCreate} disabled={creating}>
@@ -609,6 +636,11 @@ const styles = StyleSheet.create({
   rankingActions: { flexDirection: "row", gap: 16, marginTop: 4 },
   rankingActionBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 4 },
   rankingActionText: { fontSize: 13, fontWeight: "bold", color: C.primary },
+  scaleToggle: { flexDirection: "row", alignItems: "center", marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.border },
+  scaleToggleLabel: { fontSize: 14, fontWeight: "bold", color: C.text },
+  scaleToggleDesc: { fontSize: 11, color: C.textSub, marginTop: 2 },
+  scaleHint: { flexDirection: "row", gap: 6, backgroundColor: C.bg, borderRadius: 8, padding: 10, marginTop: 8 },
+  scaleHintText: { fontSize: 11, color: C.textSub, flex: 1, lineHeight: 16 },
   // 詳細
   detailSeason: { fontSize: 13, color: C.textSub, textAlign: "center", marginBottom: 8 },
   pointRuleCard: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.primaryBg, borderRadius: 10, padding: 12, marginBottom: 12 },

@@ -175,6 +175,7 @@ export const useLeagues = () => {
   const importRoundResults = async (roundId, csvData) => {
     await supabase.from("league_round_results").delete().eq("round_id", roundId);
 
+    const playerCount = csvData.length;
     const rows = csvData.map((row) => ({
       round_id: roundId,
       player_name: row.player_name,
@@ -184,6 +185,7 @@ export const useLeagues = () => {
       losses: row.losses,
       draws: row.draws,
       points: row.points,
+      round_player_count: playerCount,
     }));
 
     const { error } = await supabase.from("league_round_results").insert(rows);
@@ -194,7 +196,7 @@ export const useLeagues = () => {
   const updateStandings = async (leagueId) => {
     const { data: leagueInfo } = await supabase
       .from("leagues")
-      .select("point_rule_type, point_win, point_loss, point_draw, point_ranking")
+      .select("point_rule_type, point_win, point_loss, point_draw, point_ranking, ranking_scale_by_participants")
       .eq("id", leagueId)
       .single();
 
@@ -205,7 +207,6 @@ export const useLeagues = () => {
       .order("round_number", { ascending: true });
 
     if (!rounds || rounds.length === 0) {
-      // ラウンドがなければスタンディングもクリア
       await supabase.from("league_standings").delete().eq("league_id", leagueId);
       return;
     }
@@ -226,6 +227,18 @@ export const useLeagues = () => {
     const pointLoss = leagueInfo?.point_loss ?? 0;
     const pointDraw = leagueInfo?.point_draw ?? 1;
     const pointRanking = leagueInfo?.point_ranking || [];
+    const scaleByParticipants = leagueInfo?.ranking_scale_by_participants || false;
+
+    // 傾斜配点用: 各ラウンドの参加人数の基準値（平均）を計算
+    let basePlayerCount = 1;
+    if (scaleByParticipants && ruleType === "ranking") {
+      const roundPlayerCounts = {};
+      results.forEach((r) => {
+        if (!roundPlayerCounts[r.round_id]) roundPlayerCounts[r.round_id] = r.round_player_count || 0;
+      });
+      const counts = Object.values(roundPlayerCounts).filter((c) => c > 0);
+      basePlayerCount = counts.length > 0 ? counts.reduce((a, b) => a + b, 0) / counts.length : 1;
+    }
 
     // プレイヤー別に集計
     const playerMap = {};
@@ -253,7 +266,14 @@ export const useLeagues = () => {
       } else if (ruleType === "ranking") {
         const rank = r.ranking;
         if (rank && rank > 0 && rank <= pointRanking.length) {
-          p.total_points += pointRanking[rank - 1];
+          let pts = pointRanking[rank - 1];
+          // 傾斜配点: 参加人数 / 基準値 の倍率をかける
+          if (scaleByParticipants && basePlayerCount > 0) {
+            const roundCount = r.round_player_count || basePlayerCount;
+            const multiplier = roundCount / basePlayerCount;
+            pts = Math.round(pts * multiplier);
+          }
+          p.total_points += pts;
         }
       }
     });
@@ -341,6 +361,57 @@ export const useLeagues = () => {
     return data || [];
   };
 
+  // --- リーグ完了（参加者に通知を送信） ---
+  const completeLeagueWithNotification = async (leagueId) => {
+    if (!user) return { error: "未ログイン" };
+    // まず参加者を取得
+    const { data: participants } = await supabase
+      .from("league_participants")
+      .select("user_id")
+      .eq("league_id", leagueId);
+
+    // リーグを完了に
+    const { error } = await supabase
+      .from("leagues")
+      .update({ status: "completed" })
+      .eq("id", leagueId)
+      .eq("created_by", user.id);
+
+    if (error) return { error };
+
+    // 参加者全員に通知を作成
+    if (participants && participants.length > 0) {
+      const notifRows = participants.map((p) => ({
+        league_id: leagueId,
+        user_id: p.user_id,
+      }));
+      await supabase.from("league_completion_notifications").insert(notifRows);
+    }
+
+    await fetchMyLeagues();
+    return { error: null };
+  };
+
+  // --- 未読のリーグ完了通知を取得 ---
+  const fetchUnseenCompletions = useCallback(async () => {
+    if (!user) return [];
+    const { data } = await supabase
+      .from("league_completion_notifications")
+      .select("*, leagues(*)")
+      .eq("user_id", user.id)
+      .eq("seen", false)
+      .order("created_at", { ascending: false });
+    return data || [];
+  }, [user]);
+
+  // --- 通知を既読にする ---
+  const markCompletionSeen = async (notificationId) => {
+    await supabase
+      .from("league_completion_notifications")
+      .update({ seen: true })
+      .eq("id", notificationId);
+  };
+
   return {
     leagues,
     participatingLeagues,
@@ -350,6 +421,7 @@ export const useLeagues = () => {
     createLeague,
     deleteLeague,
     completeLeague,
+    completeLeagueWithNotification,
     fetchRounds,
     addRound,
     deleteRound,
@@ -361,5 +433,7 @@ export const useLeagues = () => {
     leaveLeague,
     removeParticipant,
     fetchParticipants,
+    fetchUnseenCompletions,
+    markCompletionSeen,
   };
 };

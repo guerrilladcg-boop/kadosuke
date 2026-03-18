@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  View, Text, FlatList, TouchableOpacity, StyleSheet, Modal,
   ActivityIndicator, Alert, RefreshControl, Share, Animated, LayoutAnimation, Platform, UIManager,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -92,16 +92,44 @@ export default function HomeScreen() {
   const [selectedTournament, setSelectedTournament] = useState(null);
 
   // リーグ参加中データ
-  const { participatingLeagues, fetchMyParticipatingLeagues } = useLeagues();
+  const { participatingLeagues, fetchMyParticipatingLeagues, fetchUnseenCompletions, markCompletionSeen, fetchStandings } = useLeagues();
   const [leagueLoading, setLeagueLoading] = useState(false);
+
+  // リーグ完了通知
+  const [completionModal, setCompletionModal] = useState(null); // { notification, league, standings }
+  const [completionQueue, setCompletionQueue] = useState([]);
 
   useEffect(() => {
     (async () => {
       setLeagueLoading(true);
       await fetchMyParticipatingLeagues();
       setLeagueLoading(false);
+      // 未読のリーグ完了通知をチェック
+      const unseen = await fetchUnseenCompletions();
+      if (unseen.length > 0) {
+        setCompletionQueue(unseen);
+      }
     })();
   }, [fetchMyParticipatingLeagues]);
+
+  // キューの先頭を表示
+  useEffect(() => {
+    if (completionQueue.length > 0 && !completionModal) {
+      const notif = completionQueue[0];
+      (async () => {
+        const standings = await fetchStandings(notif.league_id);
+        setCompletionModal({ notification: notif, league: notif.leagues, standings });
+      })();
+    }
+  }, [completionQueue, completionModal]);
+
+  const handleDismissCompletion = async () => {
+    if (completionModal) {
+      await markCompletionSeen(completionModal.notification.id);
+      setCompletionQueue((prev) => prev.slice(1));
+      setCompletionModal(null);
+    }
+  };
 
   // フォロー中タブが選択されたらフォロー主催者の大会を取得
   useEffect(() => {
@@ -647,6 +675,50 @@ export default function HomeScreen() {
         />
       )}
 
+      {/* リーグ完了結果モーダル */}
+      <Modal visible={!!completionModal} animationType="fade" transparent>
+        <View style={styles.completionOverlay}>
+          <View style={styles.completionSheet}>
+            {completionModal && (() => {
+              const { league, standings } = completionModal;
+              const MEDAL = ["🥇", "🥈", "🥉"];
+              return (
+                <>
+                  <View style={styles.completionHeader}>
+                    <Text style={styles.completionTrophy}>🏆</Text>
+                    <Text style={styles.completionTitle}>リーグ終了</Text>
+                    <Text style={styles.completionLeagueName}>{league?.name}</Text>
+                    {league?.season_name && (
+                      <Text style={styles.completionSeason}>{league.season_name}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.completionSubtitle}>最終順位</Text>
+                  <View style={styles.completionStandings}>
+                    {standings.slice(0, 10).map((s, i) => (
+                      <View key={s.id} style={[styles.completionRow, i === 0 && { borderTopWidth: 0 }]}>
+                        <View style={[styles.completionRank, s.rank <= 3 && styles.completionRankTop]}>
+                          <Text style={styles.completionRankText}>
+                            {s.rank <= 3 ? MEDAL[s.rank - 1] : s.rank}
+                          </Text>
+                        </View>
+                        <Text style={styles.completionName} numberOfLines={1}>{s.player_name}</Text>
+                        <Text style={styles.completionPts}>{s.total_points}pt</Text>
+                      </View>
+                    ))}
+                    {standings.length > 10 && (
+                      <Text style={styles.completionMore}>他{standings.length - 10}名</Text>
+                    )}
+                  </View>
+                  <TouchableOpacity style={styles.completionCloseBtn} onPress={handleDismissCompletion}>
+                    <Text style={styles.completionCloseBtnText}>閉じる</Text>
+                  </TouchableOpacity>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
       <AddResultModal visible={showAdd} onClose={() => setShowAdd(false)} />
       <TournamentDetailModal
         tournament={selectedTournament}
@@ -815,4 +887,23 @@ const styles = StyleSheet.create({
   // 勝ち点ルール
   leagueRuleInfo: { flexDirection: "row", alignItems: "center", gap: 4 },
   leagueRuleText: { fontSize: 11, color: C.textSub },
+  // リーグ完了モーダル
+  completionOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center", padding: 24 },
+  completionSheet: { backgroundColor: C.card, borderRadius: 20, padding: 24, width: "100%", maxHeight: "80%" },
+  completionHeader: { alignItems: "center", marginBottom: 20 },
+  completionTrophy: { fontSize: 48, marginBottom: 8 },
+  completionTitle: { fontSize: 20, fontWeight: "bold", color: C.text },
+  completionLeagueName: { fontSize: 16, fontWeight: "bold", color: C.primary, marginTop: 4, textAlign: "center" },
+  completionSeason: { fontSize: 13, color: C.textSub, marginTop: 2 },
+  completionSubtitle: { fontSize: 14, fontWeight: "bold", color: C.text, marginBottom: 8 },
+  completionStandings: { backgroundColor: C.bg, borderRadius: 12, overflow: "hidden", marginBottom: 16 },
+  completionRow: { flexDirection: "row", alignItems: "center", padding: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border },
+  completionRank: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.card, alignItems: "center", justifyContent: "center", marginRight: 10 },
+  completionRankTop: { backgroundColor: "#FFF8E1" },
+  completionRankText: { fontSize: 14, fontWeight: "bold", color: C.text },
+  completionName: { flex: 1, fontSize: 14, fontWeight: "600", color: C.text },
+  completionPts: { fontSize: 15, fontWeight: "bold", color: C.primary, marginLeft: 8 },
+  completionMore: { fontSize: 12, color: C.textSub, textAlign: "center", paddingVertical: 8 },
+  completionCloseBtn: { backgroundColor: C.primary, borderRadius: 12, paddingVertical: 14, alignItems: "center" },
+  completionCloseBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
 });
