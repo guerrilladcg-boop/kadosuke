@@ -24,7 +24,6 @@ export const useLeagues = () => {
   // --- 参加中リーグ一覧取得（ホーム画面用） ---
   const fetchMyParticipatingLeagues = useCallback(async () => {
     if (!user) return [];
-    // league_participants から自分が参加しているリーグを取得
     const { data: participations } = await supabase
       .from("league_participants")
       .select("league_id, player_name")
@@ -39,7 +38,6 @@ export const useLeagues = () => {
     const playerNameMap = {};
     participations.forEach((p) => { playerNameMap[p.league_id] = p.player_name; });
 
-    // リーグ情報取得
     const { data: leagueData } = await supabase
       .from("leagues")
       .select("*")
@@ -52,7 +50,6 @@ export const useLeagues = () => {
       return [];
     }
 
-    // 各リーグのスタンディング取得
     const results = [];
     for (const league of leagueData) {
       const myName = playerNameMap[league.id];
@@ -62,6 +59,12 @@ export const useLeagues = () => {
         .eq("league_id", league.id)
         .order("rank", { ascending: true });
 
+      // ラウンド数を取得
+      const { count: roundCount } = await supabase
+        .from("league_rounds")
+        .select("id", { count: "exact", head: true })
+        .eq("league_id", league.id);
+
       const myStanding = standings?.find((s) => s.player_name === myName) || null;
       const totalPlayers = standings?.length || 0;
 
@@ -70,6 +73,7 @@ export const useLeagues = () => {
         myPlayerName: myName,
         myStanding,
         totalPlayers,
+        totalRounds: roundCount || 0,
         topStandings: (standings || []).slice(0, 5),
       });
     }
@@ -126,7 +130,6 @@ export const useLeagues = () => {
 
   // --- ラウンド追加 ---
   const addRound = async (leagueId, roundData) => {
-    // 次のラウンド番号を取得
     const { data: existing } = await supabase
       .from("league_rounds")
       .select("round_number")
@@ -149,9 +152,27 @@ export const useLeagues = () => {
     return { data, error };
   };
 
+  // --- ラウンド削除 ---
+  const deleteRound = async (roundId) => {
+    const { error } = await supabase
+      .from("league_rounds")
+      .delete()
+      .eq("id", roundId);
+    return { error };
+  };
+
+  // --- ラウンド結果取得 ---
+  const fetchRoundResults = async (roundId) => {
+    const { data } = await supabase
+      .from("league_round_results")
+      .select("*")
+      .eq("round_id", roundId)
+      .order("ranking", { ascending: true });
+    return data || [];
+  };
+
   // --- ラウンド結果インポート ---
   const importRoundResults = async (roundId, csvData) => {
-    // 既存結果を削除してから新規挿入
     await supabase.from("league_round_results").delete().eq("round_id", roundId);
 
     const rows = csvData.map((row) => ({
@@ -171,20 +192,23 @@ export const useLeagues = () => {
 
   // --- スタンディング更新（勝ち点ルール対応） ---
   const updateStandings = async (leagueId) => {
-    // リーグ情報取得（勝ち点ルール）
     const { data: leagueInfo } = await supabase
       .from("leagues")
       .select("point_rule_type, point_win, point_loss, point_draw, point_ranking")
       .eq("id", leagueId)
       .single();
 
-    // 全ラウンド結果を取得
     const { data: rounds } = await supabase
       .from("league_rounds")
-      .select("id")
-      .eq("league_id", leagueId);
+      .select("id, round_number")
+      .eq("league_id", leagueId)
+      .order("round_number", { ascending: true });
 
-    if (!rounds || rounds.length === 0) return;
+    if (!rounds || rounds.length === 0) {
+      // ラウンドがなければスタンディングもクリア
+      await supabase.from("league_standings").delete().eq("league_id", leagueId);
+      return;
+    }
 
     const roundIds = rounds.map((r) => r.id);
     const { data: results } = await supabase
@@ -192,7 +216,10 @@ export const useLeagues = () => {
       .select("*")
       .in("round_id", roundIds);
 
-    if (!results) return;
+    if (!results || results.length === 0) {
+      await supabase.from("league_standings").delete().eq("league_id", leagueId);
+      return;
+    }
 
     const ruleType = leagueInfo?.point_rule_type || "wld";
     const pointWin = leagueInfo?.point_win ?? 3;
@@ -219,14 +246,11 @@ export const useLeagues = () => {
       p.total_losses += r.losses || 0;
       p.total_draws += r.draws || 0;
       p.rounds_played += 1;
-      // 最新のデッキ名を保持
       if (r.deck_name) p.deck_name = r.deck_name;
 
-      // 勝ち点計算
       if (ruleType === "wld") {
         p.total_points += (r.wins || 0) * pointWin + (r.losses || 0) * pointLoss + (r.draws || 0) * pointDraw;
       } else if (ruleType === "ranking") {
-        // 順位ベース: ranking が 1 なら pointRanking[0] のポイント
         const rank = r.ranking;
         if (rank && rank > 0 && rank <= pointRanking.length) {
           p.total_points += pointRanking[rank - 1];
@@ -234,13 +258,17 @@ export const useLeagues = () => {
       }
     });
 
-    // ポイント順でランク付け
-    const standings = Object.values(playerMap).sort(
-      (a, b) => b.total_points - a.total_points || b.total_wins - a.total_wins
-    );
+    // ソート: ポイント → 勝数 → 勝率
+    const standings = Object.values(playerMap).sort((a, b) => {
+      if (b.total_points !== a.total_points) return b.total_points - a.total_points;
+      if (b.total_wins !== a.total_wins) return b.total_wins - a.total_wins;
+      const aRate = a.total_wins + a.total_losses > 0 ? a.total_wins / (a.total_wins + a.total_losses) : 0;
+      const bRate = b.total_wins + b.total_losses > 0 ? b.total_wins / (b.total_wins + b.total_losses) : 0;
+      return bRate - aRate;
+    });
     standings.forEach((s, i) => (s.rank = i + 1));
 
-    // 参加者テーブルから user_id を取得してマッピング
+    // 参加者テーブルから user_id をマッピング
     const { data: participants } = await supabase
       .from("league_participants")
       .select("user_id, player_name")
@@ -251,7 +279,6 @@ export const useLeagues = () => {
       participants.forEach((p) => { nameToUserId[p.player_name] = p.user_id; });
     }
 
-    // 既存スタンディング削除 → 再挿入
     await supabase.from("league_standings").delete().eq("league_id", leagueId);
     const rows = standings.map((s) => ({
       league_id: leagueId,
@@ -284,6 +311,26 @@ export const useLeagues = () => {
     return { data, error };
   };
 
+  // --- リーグ参加解除 ---
+  const leaveLeague = async (leagueId) => {
+    if (!user) return { error: "未ログイン" };
+    const { error } = await supabase
+      .from("league_participants")
+      .delete()
+      .eq("league_id", leagueId)
+      .eq("user_id", user.id);
+    return { error };
+  };
+
+  // --- 参加者削除（主催者用） ---
+  const removeParticipant = async (participantId) => {
+    const { error } = await supabase
+      .from("league_participants")
+      .delete()
+      .eq("id", participantId);
+    return { error };
+  };
+
   // --- リーグ参加者一覧取得 ---
   const fetchParticipants = async (leagueId) => {
     const { data } = await supabase
@@ -305,10 +352,14 @@ export const useLeagues = () => {
     completeLeague,
     fetchRounds,
     addRound,
+    deleteRound,
+    fetchRoundResults,
     importRoundResults,
     updateStandings,
     fetchStandings,
     joinLeague,
+    leaveLeague,
+    removeParticipant,
     fetchParticipants,
   };
 };

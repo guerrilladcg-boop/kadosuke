@@ -409,85 +409,116 @@ export default function HomeScreen() {
       {/* 参加中リーグサマリー */}
       {participatingLeagues.length > 0 && (
         <View style={styles.leagueSummarySection}>
-          <Text style={styles.leagueSummaryTitle}>参加中のリーグ</Text>
-          {participatingLeagues.map((league) => (
-            <View key={league.id} style={styles.leagueCard}>
-              <View style={styles.leagueCardHeader}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={[styles.gameTag, { color: league.game_color }]}>{league.game}</Text>
-                    <View style={styles.leagueActiveBadge}>
-                      <Text style={styles.leagueActiveBadgeText}>開催中</Text>
+          <View style={styles.leagueSummaryHeader}>
+            <Ionicons name="trophy" size={18} color={C.primary} />
+            <Text style={styles.leagueSummaryTitle}>参加中のリーグ</Text>
+          </View>
+          {participatingLeagues.map((league) => {
+            const MEDAL = ["🥇", "🥈", "🥉"];
+            const myRank = league.myStanding?.rank;
+            const myRankIcon = myRank && myRank <= 3 ? MEDAL[myRank - 1] : null;
+            const roundsPlayed = league.myStanding?.rounds_played || 0;
+            const progressPct = league.totalRounds > 0 ? (roundsPlayed / league.totalRounds) * 100 : 0;
+
+            return (
+              <View key={league.id} style={styles.leagueCard}>
+                {/* ゲームカラーバー */}
+                {league.game_color && (
+                  <View style={[styles.leagueColorBar, { backgroundColor: league.game_color }]} />
+                )}
+
+                <View style={styles.leagueCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                      <Text style={[styles.gameTag, { color: league.game_color }]}>{league.game}</Text>
+                      <View style={styles.leagueActiveBadge}>
+                        <Text style={styles.leagueActiveBadgeText}>開催中</Text>
+                      </View>
                     </View>
+                    <Text style={styles.leagueCardName}>{league.name}</Text>
+                    {league.season_name && (
+                      <Text style={styles.leagueCardSeason}>{league.season_name}</Text>
+                    )}
                   </View>
-                  <Text style={styles.leagueCardName}>{league.name}</Text>
-                  {league.season_name && (
-                    <Text style={styles.leagueCardSeason}>{league.season_name}</Text>
+                  {/* 自分の順位を大きく表示 */}
+                  {league.myStanding && (
+                    <View style={[styles.myRankBig, myRank <= 3 && styles.myRankBigTop]}>
+                      <Text style={styles.myRankBigText}>{myRankIcon || `${myRank}位`}</Text>
+                      {!myRankIcon && <Text style={styles.myRankBigSub}>/{league.totalPlayers}</Text>}
+                    </View>
                   )}
                 </View>
+
+                {/* 自分のステータス */}
+                {league.myStanding ? (
+                  <View style={styles.myStandingRow}>
+                    <View style={styles.myRankBox}>
+                      <Text style={styles.myRankLabel}>ポイント</Text>
+                      <Text style={[styles.myRankValue, { color: C.primary }]}>{league.myStanding.total_points}pt</Text>
+                    </View>
+                    <View style={styles.myStandingDivider} />
+                    <View style={styles.myRankBox}>
+                      <Text style={styles.myRankLabel}>戦績</Text>
+                      <Text style={styles.myRankValue}>
+                        {league.myStanding.total_wins}W {league.myStanding.total_losses}L
+                        {league.myStanding.total_draws > 0 ? ` ${league.myStanding.total_draws}D` : ""}
+                      </Text>
+                    </View>
+                    <View style={styles.myStandingDivider} />
+                    <View style={styles.myRankBox}>
+                      <Text style={styles.myRankLabel}>参加R</Text>
+                      <Text style={styles.myRankValue}>{roundsPlayed}/{league.totalRounds}</Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.myStandingEmpty}>
+                    <Ionicons name="hourglass-outline" size={16} color={C.textSub} />
+                    <Text style={styles.myStandingEmptyText}>まだ結果がありません</Text>
+                  </View>
+                )}
+
+                {/* ラウンド進捗バー */}
+                {league.totalRounds > 0 && (
+                  <View style={styles.progressSection}>
+                    <View style={styles.progressBarBg}>
+                      <View style={[styles.progressBarFill, { width: `${Math.min(progressPct, 100)}%` }]} />
+                    </View>
+                    <Text style={styles.progressText}>{roundsPlayed}/{league.totalRounds} ラウンド消化</Text>
+                  </View>
+                )}
+
+                {/* トップ5のミニランキング */}
+                {league.topStandings.length > 0 && (
+                  <View style={styles.miniRanking}>
+                    {league.topStandings.map((s, i) => {
+                      const isMe = s.player_name === league.myPlayerName;
+                      const rankIcon = i < 3 ? MEDAL[i] : `${s.rank}`;
+                      return (
+                        <View key={s.id || i} style={[styles.miniRankRow, isMe && styles.miniRankRowMe]}>
+                          <Text style={styles.miniRankNum}>{rankIcon}</Text>
+                          <Text style={[styles.miniRankName, isMe && { fontWeight: "bold", color: C.primary }]} numberOfLines={1}>
+                            {s.player_name}{isMe ? " (自分)" : ""}
+                          </Text>
+                          <Text style={[styles.miniRankPts, isMe && { color: C.primary }]}>{s.total_points}pt</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* 勝ち点ルール表示 */}
+                <View style={styles.leagueRuleInfo}>
+                  <Ionicons name="calculator-outline" size={12} color={C.textSub} />
+                  <Text style={styles.leagueRuleText}>
+                    {league.point_rule_type === "ranking"
+                      ? (league.point_ranking || []).map((p, i) => `${i + 1}位:${p}pt`).join("  ")
+                      : `勝${league.point_win ?? 3}  負${league.point_loss ?? 0}  分${league.point_draw ?? 1}`
+                    }
+                  </Text>
+                </View>
               </View>
-
-              {/* 自分の順位・ポイント */}
-              {league.myStanding ? (
-                <View style={styles.myStandingRow}>
-                  <View style={styles.myRankBox}>
-                    <Text style={styles.myRankLabel}>順位</Text>
-                    <Text style={[styles.myRankValue, league.myStanding.rank <= 3 && { color: C.primary }]}>
-                      {league.myStanding.rank}/{league.totalPlayers}
-                    </Text>
-                  </View>
-                  <View style={styles.myStandingDivider} />
-                  <View style={styles.myRankBox}>
-                    <Text style={styles.myRankLabel}>ポイント</Text>
-                    <Text style={styles.myRankValue}>{league.myStanding.total_points}pt</Text>
-                  </View>
-                  <View style={styles.myStandingDivider} />
-                  <View style={styles.myRankBox}>
-                    <Text style={styles.myRankLabel}>戦績</Text>
-                    <Text style={styles.myRankValue}>
-                      {league.myStanding.total_wins}W {league.myStanding.total_losses}L
-                      {league.myStanding.total_draws > 0 ? ` ${league.myStanding.total_draws}D` : ""}
-                    </Text>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.myStandingEmpty}>
-                  <Text style={styles.myStandingEmptyText}>まだ結果がありません</Text>
-                </View>
-              )}
-
-              {/* トップ5のミニランキング */}
-              {league.topStandings.length > 0 && (
-                <View style={styles.miniRanking}>
-                  {league.topStandings.map((s, i) => {
-                    const isMe = s.player_name === league.myPlayerName;
-                    return (
-                      <View key={s.id || i} style={[styles.miniRankRow, isMe && styles.miniRankRowMe]}>
-                        <Text style={[styles.miniRankNum, i < 3 && { color: C.primary, fontWeight: "bold" }]}>
-                          {s.rank}
-                        </Text>
-                        <Text style={[styles.miniRankName, isMe && { fontWeight: "bold", color: C.primary }]} numberOfLines={1}>
-                          {s.player_name}{isMe ? " (自分)" : ""}
-                        </Text>
-                        <Text style={[styles.miniRankPts, isMe && { color: C.primary }]}>{s.total_points}pt</Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-
-              {/* 勝ち点ルール表示 */}
-              <View style={styles.leagueRuleInfo}>
-                <Ionicons name="calculator-outline" size={12} color={C.textSub} />
-                <Text style={styles.leagueRuleText}>
-                  {league.point_rule_type === "ranking"
-                    ? (league.point_ranking || []).map((p, i) => `${i + 1}位:${p}pt`).join("  ")
-                    : `勝${league.point_win ?? 3}  負${league.point_loss ?? 0}  分${league.point_draw ?? 1}`
-                  }
-                </Text>
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
 
@@ -744,35 +775,41 @@ const styles = StyleSheet.create({
 
   // リーグサマリー
   leagueSummarySection: { marginBottom: 16 },
-  leagueSummaryTitle: { fontSize: 15, fontWeight: "bold", color: C.text, marginBottom: 10 },
+  leagueSummaryHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 },
+  leagueSummaryTitle: { fontSize: 15, fontWeight: "bold", color: C.text },
   leagueCard: {
     backgroundColor: C.card, borderRadius: 12, padding: 16, marginBottom: 10,
     elevation: 2, shadowColor: "#000", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4,
+    overflow: "hidden",
   },
+  leagueColorBar: { position: "absolute", top: 0, left: 0, width: 4, height: "100%", borderTopLeftRadius: 12, borderBottomLeftRadius: 12 },
   leagueCardHeader: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12 },
   leagueCardName: { fontSize: 15, fontWeight: "bold", color: C.text, marginTop: 4 },
   leagueCardSeason: { fontSize: 12, color: C.textSub, marginTop: 2 },
   leagueActiveBadge: { backgroundColor: C.successBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   leagueActiveBadgeText: { fontSize: 10, fontWeight: "bold", color: C.success },
-  // 自分の順位
-  myStandingRow: {
-    flexDirection: "row", backgroundColor: C.bg, borderRadius: 10, padding: 12,
-    marginBottom: 10,
-  },
+  myRankBig: { alignItems: "center", justifyContent: "center", backgroundColor: C.bg, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, marginLeft: 10 },
+  myRankBigTop: { backgroundColor: "#FFF8E1" },
+  myRankBigText: { fontSize: 22, fontWeight: "bold", color: C.text },
+  myRankBigSub: { fontSize: 11, color: C.textSub },
+  // 自分のステータス
+  myStandingRow: { flexDirection: "row", backgroundColor: C.bg, borderRadius: 10, padding: 12, marginBottom: 10 },
   myRankBox: { flex: 1, alignItems: "center" },
   myRankLabel: { fontSize: 10, color: C.textSub, marginBottom: 2 },
-  myRankValue: { fontSize: 16, fontWeight: "bold", color: C.text },
+  myRankValue: { fontSize: 15, fontWeight: "bold", color: C.text },
   myStandingDivider: { width: 1, backgroundColor: C.border, marginVertical: 2 },
-  myStandingEmpty: { alignItems: "center", paddingVertical: 10, backgroundColor: C.bg, borderRadius: 10, marginBottom: 10 },
+  myStandingEmpty: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 12, backgroundColor: C.bg, borderRadius: 10, marginBottom: 10 },
   myStandingEmptyText: { fontSize: 12, color: C.textSub },
+  // 進捗バー
+  progressSection: { marginBottom: 10 },
+  progressBarBg: { height: 6, backgroundColor: C.bg, borderRadius: 3, overflow: "hidden" },
+  progressBarFill: { height: 6, backgroundColor: C.primary, borderRadius: 3 },
+  progressText: { fontSize: 10, color: C.textSub, textAlign: "right", marginTop: 3 },
   // ミニランキング
   miniRanking: { marginBottom: 8 },
-  miniRankRow: {
-    flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border,
-  },
+  miniRankRow: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.border },
   miniRankRowMe: { backgroundColor: C.primaryBg, borderRadius: 6 },
-  miniRankNum: { width: 24, fontSize: 13, color: C.textSub, textAlign: "center" },
+  miniRankNum: { width: 28, fontSize: 14, textAlign: "center" },
   miniRankName: { flex: 1, fontSize: 13, color: C.text, marginLeft: 4 },
   miniRankPts: { fontSize: 13, fontWeight: "bold", color: C.text, marginLeft: 8 },
   // 勝ち点ルール
