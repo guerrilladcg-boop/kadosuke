@@ -6,7 +6,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { C } from "../constants/theme";
 import { useProfile } from "../hooks/useProfile";
-import { getLevelFromExp, getTitleForLevel } from "../constants/levels";
+import { getLevelFromExp } from "../constants/levels";
 import { getAchievementByCode } from "../constants/achievements";
 
 export default function PublicProfileModal({ visible, onClose, userId }) {
@@ -32,7 +32,6 @@ export default function PublicProfileModal({ visible, onClose, userId }) {
 
   const initial = profile?.name?.charAt(0)?.toUpperCase() || "?";
   const level = profile ? (profile.level || getLevelFromExp(profile.experience || 0)) : 1;
-  const title = getTitleForLevel(level);
   const badges = (profile?.achievement_badges || [])
     .map(getAchievementByCode)
     .filter(Boolean);
@@ -40,7 +39,7 @@ export default function PublicProfileModal({ visible, onClose, userId }) {
   const handleShare = async () => {
     if (!profile) return;
     const medalStr = stats ? `${stats.medals.gold}優勝 ${stats.medals.silver}準優勝 ${stats.medals.bronze}入賞` : "";
-    const text = `${profile.name} | Lv.${level} ${title}${medalStr ? ` | ${medalStr}` : ""}${profile.main_deck ? ` | デッキ: ${profile.main_deck}` : ""} #カドスケ`;
+    const text = `Lv.${level} ${profile.name}${medalStr ? ` | ${medalStr}` : ""} #カドスケ`;
     await Share.share({ message: text });
   };
 
@@ -81,12 +80,8 @@ export default function PublicProfileModal({ visible, onClose, userId }) {
                   <Text style={styles.avatarInitial}>{initial}</Text>
                 </View>
               )}
-              <Text style={styles.name}>{profile.name || "プレイヤー"}</Text>
+              <Text style={styles.name}>Lv.{level}　{profile.name || "プレイヤー"}</Text>
               <View style={styles.titleRow}>
-                <View style={styles.levelBadge}>
-                  <Text style={styles.levelBadgeText}>Lv.{level}</Text>
-                </View>
-                <Text style={styles.titleText}>{title}</Text>
                 {profile.organizer_status === "approved" && (
                   <View style={styles.organizerBadge}>
                     <Ionicons name="shield-checkmark" size={12} color="#fff" />
@@ -104,21 +99,6 @@ export default function PublicProfileModal({ visible, onClose, userId }) {
               )}
             </View>
 
-            {/* === 自己紹介 === */}
-            {profile.bio ? (
-              <View style={styles.section}>
-                <Text style={styles.bioText}>{profile.bio}</Text>
-              </View>
-            ) : null}
-
-            {/* === メインデッキ === */}
-            {profile.main_deck ? (
-              <View style={styles.deckBox}>
-                <Ionicons name="albums-outline" size={16} color={C.primary} />
-                <Text style={styles.deckLabel}>メインデッキ</Text>
-                <Text style={styles.deckName}>{profile.main_deck}</Text>
-              </View>
-            ) : null}
 
             {/* === 戦績サマリー === */}
             {stats && (
@@ -127,10 +107,6 @@ export default function PublicProfileModal({ visible, onClose, userId }) {
                   <View style={styles.statItem}>
                     <Text style={styles.statValue}>{stats.tournamentCount}</Text>
                     <Text style={styles.statLabel}>大会参加</Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{stats.winRate}%</Text>
-                    <Text style={styles.statLabel}>勝率</Text>
                   </View>
                   <View style={styles.statItem}>
                     <Text style={[styles.statValue, { color: "#FFD700" }]}>{stats.medals.gold}</Text>

@@ -223,17 +223,6 @@ function renderEventCard(t, onSelect) {
               <Text style={cal.calEnteredBadgeText}>外部サイト</Text>
             </View>
           )}
-          {!t.external_url && t.max_players && t.remainingSlots != null && (
-            <View style={[cal.calEnteredBadge, {
-              backgroundColor: t.isCapacityFull ? C.danger : t.remainingSlots <= 3 ? C.warning : C.primary + "20",
-            }]}>
-              <Text style={[cal.calEnteredBadgeText, {
-                color: t.isCapacityFull || t.remainingSlots <= 3 ? "#fff" : C.primary,
-              }]}>
-                {t.isCapacityFull ? "満員" : `残${t.remainingSlots}枠`}
-              </Text>
-            </View>
-          )}
           {t.isDeadlinePassed && !t.isEntered && (
             <View style={[cal.calEnteredBadge, { backgroundColor: C.danger + "20" }]}>
               <Text style={[cal.calEnteredBadgeText, { color: C.danger }]}>締切済</Text>
@@ -445,17 +434,6 @@ export default function SearchScreen() {
                   <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
                     {t.isEntered && (<View style={styles.enteredBadge}><Text style={styles.enteredBadgeText}>エントリー済</Text></View>)}
                     {t.external_url && (<View style={[styles.enteredBadge, { backgroundColor: "#3B82F6" }]}><Text style={styles.enteredBadgeText}>外部サイト ↗</Text></View>)}
-                    {!t.external_url && t.max_players && t.remainingSlots != null && (
-                      <View style={[styles.enteredBadge, {
-                        backgroundColor: t.isCapacityFull ? C.danger : t.remainingSlots <= 3 ? C.warning : C.primary + "20",
-                      }]}>
-                        <Text style={[styles.enteredBadgeText, {
-                          color: t.isCapacityFull || t.remainingSlots <= 3 ? "#fff" : C.primary,
-                        }]}>
-                          {t.isCapacityFull ? "満員" : `残${t.remainingSlots}枠`}
-                        </Text>
-                      </View>
-                    )}
                     {t.isDeadlinePassed && !t.isEntered && (
                       <View style={[styles.enteredBadge, { backgroundColor: C.danger + "20" }]}>
                         <Text style={[styles.enteredBadgeText, { color: C.danger }]}>締切済</Text>

@@ -4,7 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { C } from "../constants/theme";
-import { getLevelFromExp, getTitleForLevel } from "../constants/levels";
+import { getLevelFromExp } from "../constants/levels";
 import { useAuthStore } from "../store/useAuthStore";
 import { useOrganizer } from "../hooks/useOrganizer";
 import { useAdmin } from "../hooks/useAdmin";
@@ -32,7 +32,6 @@ export default function MyPageScreen() {
     toggleNotifications, toggleTournamentEntry, toggleFavoriteOrganizer, toggleSponsorItems,
     updateDisplayNames, switchDisplayName,
     updateShippingAddress, getShippingAddress,
-    updateBio, updateMainDeck,
   } = useProfile();
   const [showCreateTournament, setShowCreateTournament] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -431,7 +430,7 @@ export default function MyPageScreen() {
             )}
             <View style={styles.profileInfo}>
               <View style={styles.profileNameRow}>
-                <Text style={styles.profileName}>{displayName}</Text>
+                <Text style={styles.profileName}>Lv.{profile?.level || getLevelFromExp(profile?.experience || 0)}　{displayName}</Text>
                 {renderOrganizerBadge()}
               </View>
               <Text style={styles.profileEmail}>{user?.email}</Text>
@@ -449,56 +448,7 @@ export default function MyPageScreen() {
             <Ionicons name="chevron-forward" size={16} color={C.textSub} />
           </TouchableOpacity>
 
-          {/* === レベル・称号 === */}
-          {profile && (() => {
-            const exp = profile.experience || 0;
-            const level = profile.level || getLevelFromExp(exp);
-            const title = getTitleForLevel(level);
-            return (
-              <View style={styles.levelSection}>
-                <View style={styles.levelRow}>
-                  <View style={styles.levelBadge}>
-                    <Text style={styles.levelBadgeText}>Lv.{level}</Text>
-                  </View>
-                  <Text style={styles.levelTitle}>{title}</Text>
-                </View>
-              </View>
-            );
-          })()}
 
-          {/* === 自己紹介・メインデッキ === */}
-          <TouchableOpacity
-            style={styles.accountSettingsItem}
-            onPress={() => {
-              Alert.prompt
-                ? Alert.prompt("自己紹介", "200文字以内で入力", (text) => { if (text !== null) updateBio(text.slice(0, 200)); }, "plain-text", profile?.bio || "")
-                : Alert.alert("自己紹介", profile?.bio || "未設定", [
-                    { text: "閉じる", style: "cancel" },
-                  ]);
-            }}
-          >
-            <Ionicons name="chatbubble-ellipses-outline" size={18} color={C.primary} />
-            <Text style={styles.accountSettingsLabel}>自己紹介</Text>
-            <View style={{ flex: 1 }} />
-            <Text style={{ fontSize: 12, color: C.textSub, maxWidth: 150 }} numberOfLines={1}>{profile?.bio || "未設定"}</Text>
-            <Ionicons name="chevron-forward" size={16} color={C.textSub} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.accountSettingsItem}
-            onPress={() => {
-              Alert.prompt
-                ? Alert.prompt("メインデッキ", "使用デッキ名を入力", (text) => { if (text !== null) updateMainDeck(text); }, "plain-text", profile?.main_deck || "")
-                : Alert.alert("メインデッキ", profile?.main_deck || "未設定", [
-                    { text: "閉じる", style: "cancel" },
-                  ]);
-            }}
-          >
-            <Ionicons name="albums-outline" size={18} color={C.primary} />
-            <Text style={styles.accountSettingsLabel}>メインデッキ</Text>
-            <View style={{ flex: 1 }} />
-            <Text style={{ fontSize: 12, color: C.textSub, maxWidth: 150 }} numberOfLines={1}>{profile?.main_deck || "未設定"}</Text>
-            <Ionicons name="chevron-forward" size={16} color={C.textSub} />
-          </TouchableOpacity>
         </View>
 
         {/* === 主催者セクション === */}

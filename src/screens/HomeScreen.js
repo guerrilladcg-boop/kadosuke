@@ -354,22 +354,12 @@ export default function HomeScreen() {
             ))}
           </View>
 
-          {/* 勝率・統計バー */}
-          {stats.totalGames > 0 && (
+          {/* 統計バー */}
+          {stats.count > 0 && (
             <View style={styles.statsBar}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{stats.count}</Text>
                 <Text style={styles.statLabel}>大会数</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: C.success }]}>{stats.winRate}%</Text>
-                <Text style={styles.statLabel}>勝率</Text>
-              </View>
-              <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{stats.totalGames}</Text>
-                <Text style={styles.statLabel}>総対戦数</Text>
               </View>
             </View>
           )}
