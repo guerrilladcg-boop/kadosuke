@@ -4,6 +4,7 @@ import {
   Animated, Dimensions,
 } from "react-native";
 import { C } from "../constants/theme";
+import { hapticSuccess } from "../utils/haptics";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -128,6 +129,7 @@ export default function LoginBonusModal({
 
     setClaimed(true);
     setClaimResult(result);
+    hapticSuccess();
 
     // ポイント浮き上がりアニメーション
     Animated.parallel([

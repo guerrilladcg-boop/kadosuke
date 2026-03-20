@@ -4,6 +4,7 @@ import {
   Animated, Dimensions,
 } from "react-native";
 import { C } from "../constants/theme";
+import { hapticSuccess } from "../utils/haptics";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
@@ -30,6 +31,7 @@ export default function LevelUpModal({ visible, onClose, levelUp }) {
   useEffect(() => {
     if (visible && levelUp) {
       resetAll();
+      hapticSuccess();
 
       // フェードイン + カードスプリング
       Animated.parallel([
